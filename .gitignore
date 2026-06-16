@@ -1,0 +1,41 @@
+# ============================================================
+# AATS — root .gitignore
+# ============================================================
+
+# --- dependencies / build artifacts (regenerable) ---
+node_modules/
+dist/
+build/
+.vite/
+.cache/
+*.tsbuildinfo
+coverage/
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# --- secrets / keys / WALLETS (NEVER commit real ones) ---
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.keypair
+*-keypair.json
+keypair*.json
+wallet*.json
+*-wallet.json
+trade-wallet*.json
+secrets/
+
+# --- os / editor noise ---
+.DS_Store
+Thumbs.db
+*.log
+.qa-tmp/

@@ -1,0 +1,152 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  AATS Sniper — premium dark operator deck theme.
+  Dark-only. Raw hex tokens for direct use; shadcn HSL channel vars so the
+  existing src/components/ui/* library blends into the dark palette.
+*/
+
+@layer base {
+  :root {
+    /* ---- Raw palette (hex) ---- */
+    --bg: #0a0b0d;
+    --panel: #111418;
+    --panel-2: #171b21;
+    --border: #1e242c;
+    --hover: #1b2027;
+
+    --text: #e8edf4;
+    --muted: #9aa4b2;
+    --faint: #646e7e;
+
+    --accent: #22e39a;
+    --accent-dim: #0f6e56;
+
+    --up: #22e39a;
+    --down: #ff5d5d;
+    --danger: #ff5d5d;
+    --warn: #ffb020;
+    --info: #4aa3ff;
+    --violet: #8b7bff;
+
+    /*
+      shadcn theme tokens as HSL *channels* (no hsl() wrapper) so Tailwind's
+      `<alpha-value>` opacity modifiers keep working. NOTE: three names in the
+      palette above also exist in shadcn (accent / muted / border). To avoid a
+      same-block CSS collision, the shadcn channel versions are suffixed `-h`
+      and the Tailwind config maps the shadcn tokens to these. The bare hex vars
+      (--accent #22e39a, --muted #9aa4b2, --border #1e242c) stay the source of
+      truth for the raw palette tokens, color-mix tints and scrollbars.
+    */
+    --background-h: 220 14% 5%; /* ~#0a0b0d */
+    --foreground-h: 213 30% 93%; /* ~#e8edf4 */
+    --card-h: 216 16% 8%; /* ~#111418 */
+    --card-foreground-h: 213 30% 93%;
+    --popover-h: 213 17% 10%; /* ~#171b21 */
+    --popover-foreground-h: 213 30% 93%;
+    --primary-h: 158 76% 51%; /* vivid emerald #22e39a */
+    --primary-foreground-h: 220 14% 5%;
+    --secondary-h: 213 17% 11%; /* panel-2-ish */
+    --secondary-foreground-h: 213 30% 93%;
+    --muted-h: 215 16% 14%; /* shadcn muted = dark surface */
+    --muted-foreground-h: 214 12% 65%; /* ~#9aa4b2 secondary text */
+    --accent-h: 213 17% 12%; /* shadcn accent = subtle hover surface */
+    --accent-foreground-h: 213 30% 93%;
+    --destructive-h: 0 100% 68%; /* #ff5d5d */
+    --destructive-foreground-h: 0 0% 100%;
+    --border-h: 213 18% 15%; /* ~#1e242c */
+    --input-h: 213 18% 15%;
+    --ring-h: 158 76% 51%; /* emerald focus ring */
+    --radius: 0.625rem;
+
+    --sidebar-background: 216 16% 8%;
+    --sidebar-foreground: 214 12% 65%;
+    --sidebar-primary: 158 76% 51%;
+    --sidebar-primary-foreground: 220 14% 5%;
+    --sidebar-accent: 213 17% 12%;
+    --sidebar-accent-foreground: 213 30% 93%;
+    --sidebar-border: 213 18% 15%;
+    --sidebar-ring: 158 76% 51%;
+
+    color-scheme: dark;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-bg text-text;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+      Roboto, Helvetica, Arial, sans-serif;
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-size: 13px;
+  }
+
+  /* Every number aligns: tabular monospace utility. */
+  .num {
+    font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas,
+      monospace;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1, "zero" 1;
+  }
+}
+
+@layer utilities {
+  /* Thin, dark scrollbars to match the terminal aesthetic. */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: var(--faint);
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Faint single-pixel ring used in place of drop shadows. */
+  .ring-hairline {
+    box-shadow: 0 0 0 1px var(--border);
+  }
+}
+
+/* Global scrollbar default so the whole app feels consistent. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--faint);
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

@@ -1,0 +1,59 @@
+# Behaviour and thresholds. Secrets (keys, RPC URLs, tokens) belong in .env,
+# never here. Defaults are deliberately safe: dry_run on, auto_execute off.
+bot:
+  dry_run: true          # simulate everything; never submit real transactions
+  auto_execute: false    # when false the bot only recommends candidates
+  max_daily_loss_sol: 5.0
+  consecutive_loss_limit: 3
+
+chains:
+  solana:
+    rpc_ws: "wss://api.mainnet-beta.solana.com"
+    private_rpc: ""        # e.g. a paid low-latency node; leave blank for dry-run
+    mev_relay: "jito"      # used only for MEV *protection*, not front-running
+    jito_tip_sol: 0.0005
+  base:
+    rpc_http: "https://mainnet.base.org"
+    private_rpc: ""
+
+filters:
+  min_market_cap_usd: 600000
+  max_market_cap_usd: 30000000
+  min_volume_5m_usd: 50000
+  min_holders: 300
+  win_probability_threshold: 0.80   # 0..1
+
+telegram:
+  bot_token: ""                       # overridden by TELEGRAM_BOT_TOKEN
+  monitored_channels:
+    - "@example_calls_channel"
+  consolidated_channel_id: 0
+  regex_pattern: "\\b[1-9A-HJ-NP-Za-km-z]{32,44}\\b"
+
+kol_database:
+  enable_tracking: true
+  snapshot_intervals: ["2m", "6m", "10m", "1h", "4h", "12h"]
+
+execution:
+  slippage_buy_percent: 3.0
+  slippage_sell_percent: 3.0
+  default_hold_seconds: 360           # 6 minutes
+  sell_ladder:
+    enabled: false
+    tiers:
+      - profit_multiple: 2.0
+        percentage: 70
+      - profit_multiple: 5.0
+        percentage: 30
+
+dashboard:
+  listen_address: "0.0.0.0:8080"
+  auth_username: "admin"
+  auth_password_hash: ""              # control endpoints use DASHBOARD_PASSWORD env
+
+database:
+  host: ""                            # blank => in-memory store; set to enable postgres
+  port: 5432
+  user: "postgres"
+  password: "postgres"
+  dbname: "trading_bot"

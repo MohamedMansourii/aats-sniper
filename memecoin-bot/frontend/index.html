@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Memecoin Bot — Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Memecoin Trading Bot</h1>
+    <div id="mode-badge" class="badge">loading…</div>
+  </header>
+
+  <section class="banner" id="dry-run-banner">
+    DRY-RUN / PAPER MODE — no real funds are at risk. Numbers below are simulated.
+  </section>
+
+  <main>
+    <div class="grid">
+      <div class="card"><span class="label">Uptime</span><span id="uptime" class="value">—</span></div>
+      <div class="card"><span class="label">Tokens Found</span><span id="found" class="value">—</span></div>
+      <div class="card"><span class="label">Filtered Out</span><span id="filtered" class="value">—</span></div>
+      <div class="card"><span class="label">Candidates</span><span id="candidates-count" class="value">—</span></div>
+      <div class="card"><span class="label">Trades Today</span><span id="trades" class="value">—</span></div>
+      <div class="card"><span class="label">Win Rate</span><span id="winrate" class="value">—</span></div>
+      <div class="card"><span class="label">Total PnL (SOL)</span><span id="pnl" class="value">—</span></div>
+      <div class="card"><span class="label">Circuit Breaker</span><span id="breaker" class="value">—</span></div>
+    </div>
+
+    <h2>Candidate Queue</h2>
+    <table id="candidates">
+      <thead>
+        <tr><th>Time</th><th>KOL</th><th>Token</th><th>Mkt Cap</th><th>Safety</th><th>Win %</th><th>Status</th><th>Reason</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </main>
+
+  <footer>Auto-refreshing every 5s · This is a research scaffold, not financial advice.</footer>
+  <script src="app.js"></script>
+</body>
+</html>

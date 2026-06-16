@@ -1,0 +1,871 @@
+<h1>Kooora.com — Site Architecture Blueprint</h1>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Date</strong></td>
+<td>2026-06-12</td>
+</tr>
+<tr>
+<td><strong>Purpose</strong></td>
+<td>A complete, structure-only information-architecture blueprint of <a href="https://www.kooora.com">https://www.kooora.com</a>, compiled from six research reports. It is intended as reference input for designing the client&#39;s <strong>own original</strong> sports site — not for copying Kooora.</td>
+</tr>
+<tr>
+<td><strong>Method</strong></td>
+<td>robots.txt analysis + full sitemap-index crawl (1 index + all 13 child sitemaps, ≈3,532 URLs inventoried) + ~60 polite sequential page fetches covering every distinct page template (homepage, match center, broadcast schedule, competitions, teams, players, news, transfers, videos, shop, other-sport verticals, static pages), including raw-HTML pulls for navigation and deliberate 404 probes to verify routing rules.</td>
+</tr>
+<tr>
+<td><strong>Ethics note</strong></td>
+<td>This is a structure-only study. No article text, images, or proprietary design assets were copied at any stage. URLs, slugs, navigation labels, and layout-block descriptions are recorded generically for IA analysis. The client&#39;s site must be an original design informed by — not an imitation of — these patterns.</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>1. Executive Summary</h2>
+<p><strong>What the site is.</strong> Kooora.com is the largest Arabic-language sports website: a fully right-to-left (RTL), Arabic-only property (<code>&lt;html lang=&quot;ar&quot; dir=&quot;rtl&quot;&gt;</code>) running as the Arabic edition (<code>&quot;edition&quot;:&quot;ar&quot;</code>) of the <strong>Footballco/GOAL publishing platform</strong> — the same Next.js component system (<code>fco-*</code> class prefix) that powers GOAL.com. There is no language switcher and no hreflang alternates; internationalization is handled by sibling sites, not locales.</p>
+<p><strong>Two backends, visible in the URLs.</strong> The site is a thin presentation layer over two distinct systems, each with its own ID scheme:</p>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th>What it serves</th>
+<th>ID format</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Headless CMS (Contentstack-style)</td>
+<td>Articles, listicles, video articles, sport-section hubs, most author pages</td>
+<td><code>blt</code> + 16 lowercase hex chars</td>
+<td><code>blt9153ffc689ab3cad</code></td>
+</tr>
+<tr>
+<td>Sports-data feed (Opta/Stats-Perform-style; assets via sportfeeds.io CDN)</td>
+<td>Matches, teams, players, competitions, standings, stats</td>
+<td>Opaque ~21–25-char base-36 token (lowercase for teams/players/competitions; mixed-case, occasionally hyphenated, for matches)</td>
+<td><code>ak48fkypnql8y4n69cvcq5ghc</code> (team), <code>fE4Kl8TDt5GkVQ9xvEl14</code> (match)</td>
+</tr>
+</tbody></table>
+<p><strong>Two football namespaces.</strong> Football content is split across two near-identical path prefixes distinguished only by the Arabic definite article &quot;ال&quot;:</p>
+<ul>
+<li><code>/كرة-القدم/…</code> (<em>kurat al-qadam</em>, &quot;the football&quot;) — <strong>live data pages</strong>: matches, teams, players, competitions, country hubs.</li>
+<li><code>/كرة-قدم/…</code> (<em>kurat qadam</em>, &quot;football&quot;) — <strong>editorial pages</strong>: news articles and listicles from the CMS.</li>
+</ul>
+<p><strong>Headline IA insight.</strong> Kooora is <strong>one deep football data product plus news verticals for everything else</strong>. Football gets the full entity model (match / team / player / competition / country, each with tabbed sub-pages, standings, and statistics). The six other sports (tennis, Formula 1, basketball, handball, volleyball, futsal) are <strong>news-only CMS feeds</strong> with no scores, standings, or fixtures. Transfers and Shop are likewise editorial feeds dressed as sections, not data products. Coaches, referees, and stadiums appear as plain text — they are not navigable entities.</p>
+<p>Other defining traits: mandatory trailing entity IDs on all data and editorial detail URLs (slug-only URLs 404); tab sub-pages expressed as path segments <strong>between</strong> slug and ID on competition/team/player pages but as <strong>client-side JS tabs</strong> on match pages and the matches hub; path-segment pagination (<code>/أخبار/2</code>) with zero query parameters anywhere; and a compact single-bar footer.</p>
+<hr>
+<h2>2. Complete Hierarchical Site Tree</h2>
+<p>Legend: <code>[URL]</code> = real server route (verified) · <code>[JS]</code> = client-side tab/state on the parent URL (no route of its own; probed variants 404) · <code>[modal]</code> = client-rendered overlay, no URL · <code>‹id›</code> = sports-data entity ID · <code>‹blt›</code> = CMS <code>blt</code>+16-hex ID. Every Arabic slug is paired with its English translation.</p>
+<pre><code>www.kooora.com/
+|
++-- /                                          Homepage [URL]
+|
++-- كرة-القدم/  (&quot;the football&quot; - SPORTS-DATA NAMESPACE)
+|   |
+|   +-- مباريات-اليوم                          Today&#39;s matches / live hub [URL]
+|   |   +-- date strip + month calendar        [JS] (no date URLs; ?date= ignored, path dates 404)
+|   |   +-- filter: الكل (All)                 [JS]
+|   |   +-- filter: مباشر (Live, count badge)  [JS]
+|   |   +-- filter: المفضلة (Favorites)        [JS]
+|   |
+|   +-- مباراة/‹home›-v-‹away›/‹id›            Match detail [URL]  (&quot;match&quot;; joiner -v- or -ضد- &quot;vs&quot;)
+|   |   +-- نظرة عامة / المُلخص                [JS] Overview/Summary (default; label varies by match state)
+|   |   +-- الأحداث الرئيسية                   [JS] Key events timeline
+|   |   +-- التشكيلة                           [JS] Lineups (sitemap links use #التشكيلة fragment)
+|   |   +-- تعليق                              [JS] Minute-by-minute commentary
+|   |   +-- ترتيب                              [JS] Standings
+|   |   +-- مناقشة                             [JS] Fan discussion
+|   |
+|   +-- مسابقة/‹slug›/‹id›                     Competition hub - معلومات Info (default) [URL]
+|   |   +-- أخبار/‹id›                         [URL] News tab (&quot;akhbar&quot;)
+|   |   +-- مباريات/‹id›                       [URL] Matches tab - round selector (&quot;mubarayat&quot;)
+|   |   +-- جدول/‹id›                          [URL] Standings tab (label: ترتيب; slug: &quot;jadwal&quot; = table)
+|   |   +-- أفضل-اللاعبين/‹id›                 [URL] Top players tab (stat leaderboards)
+|   |   *League and tournament variants share this 5-tab template; see 3.6*
+|   |
+|   +-- فريق/‹slug›/‹id›                       Team page - معلومات Info (default) [URL]  (&quot;fariq&quot; = team)
+|   |   +-- أخبار/‹id›                         [URL] News tab
+|   |   +-- فيديوهات/‹id›                      [URL] Videos tab (&quot;vidyuhat&quot;)
+|   |   +-- مباريات/‹id›                       [URL] Matches tab (competition + season filters)
+|   |   +-- قائمة-اللاعبين/‹id›                [URL] Squad list (&quot;qa&#39;imat al-la&#39;ibin&quot;)
+|   |   +-- جدول/‹id›                          [URL] Standings tab (label: ترتيب)
+|   |   +-- أفضل-اللاعبين/‹id›                 [URL] Top players tab - CLUBS ONLY
+|   |   *National-team variant: same pattern, 6 tabs (no Top players); see 3.8*
+|   |
+|   +-- لاعب/‹slug›/‹id›                       Player page - إحصائيات Stats (default) [URL]  (&quot;la&#39;ib&quot; = player)
+|   |   +-- مسيرة-اللاعب/‹id›                  [URL] Career path / transfer history (&quot;masirat al-la&#39;ib&quot;)
+|   |   +-- أخبار/‹id›                         [URL] News tab (the form most internal links use)
+|   |
+|   +-- دولة/‹country-name›/‹iso3›             Country hub [URL]  (&quot;dawla&quot; = country; 20 in sitemap)
+|                                              (multi-word names keep literal spaces, e.g. المملكة العربية السعودية/ksa)
+|
++-- كرة-قدم/  (&quot;football&quot;, no article - EDITORIAL/CMS NAMESPACE)
+|   +-- أخبار/‹headline-slug›/‹blt›            Article page [URL] - shared by 4 editorial sub-types:
+|   |                                          news, video articles (&quot;فيديو:&quot; headline prefix),
+|   |                                          where-to-watch guides, featured long-form
+|   +-- القوائم/‹slug›/‹blt›                   Listicle / slideshow [URL]  (&quot;al-qawa&#39;im&quot; = lists)
+|
++-- أخبار                                      News hub [URL]  (&quot;akhbar&quot; = news)
+|   +-- أخبار/2, /3 ...                        [URL] pagination (&quot;أقدم&quot; Older link)
+|
++-- فيديوهات                                   Videos hub [URL]  (&quot;vidyuhat&quot; = videos)
+|   +-- فيديوهات/2 ...                         [URL] pagination
+|
++-- الإنتقالات/‹id›                            Transfers hub [URL]  (&quot;al-intiqalat&quot; = transfers; NFD-encoded slug)
+|   +-- الإنتقالات/2/‹id› ...                  [URL] pagination (page number BETWEEN slug and ID)
+|
++-- أحداث-رياضية/كرة-القدم                     Broadcast/TV schedule - football [URL]
+|   |                                          (&quot;ahdath riyadiya&quot; = sports events; nav label جدول البث)
+|   +-- date tabs: اليوم Today + 6 days        [JS] (no date URLs)
+|   +-- sport switcher                         -&gt; links to other-sport CMS hubs (below)
+|
++-- كل-البطولات                                All-competitions index [URL]  (&quot;kul al-butulat&quot; = all tournaments)
+|   +-- filter bar: الكل All | شائع Popular | جميع الدول All countries | دوري League | رجال Men   [JS]
+|
++-- التسوق-الرياضي/‹id›                        Shop feed [URL]  (&quot;al-tasawwuq al-riyadi&quot; = sports shopping)
+|   +-- التسوق-الرياضي/2/‹id› ...              [URL] pagination
+|
++-- OTHER-SPORT VERTICALS (news-only CMS hubs, pattern /‹sport-slug›/‹blt›)
+|   +-- تنس/‹blt›                              Tennis [URL]   (+ articles /تنس/أخبار/‹slug›/‹blt›; page /تنس/2/‹blt›)
+|   +-- الفورملا-1/‹blt›                       Formula 1 [URL]
+|   +-- كرة-سلة/‹blt›                          Basketball [URL]
+|   +-- كرة-يد/‹blt›                           Handball [URL]
+|   +-- كرة-طائرة/‹blt›                        Volleyball [URL]
+|   +-- قدم-صالات/‹blt›                        Futsal [URL]
+|
++-- مؤلف/‹author-slug›/‹id›                    Author pages [URL]  (&quot;mu&#39;allif&quot; = author;
+|                                              ID = legacy numeric OR ‹blt›; 100 in sitemap)
+|
++-- UTILITY / LEGAL
+|   +-- سياسة-الخصوصية                         Privacy policy [URL]
+|   +-- سياسة-الاستخدام                        Terms (slug literally &quot;usage policy&quot;) [URL]
+|   +-- اتصل-بنا                               Contact us [URL]
+|   +-- cookie-consent settings                [modal] (footer button, no href)
+|   +-- login / create account                 [modal] (header button; Google Identity Services;
+|   |                                          favorites/follow-team, newsletters - no account URL found)
+|   +-- search                                 [JS] client-side only; no SSR search box, no search URL found
+|
++-- sitemap                                    XML sitemap index [URL]
+    +-- sitemap/‹name›.xml                     13 children: main, matches, teams, competitions,
+                                               countries, categories, authors, editorial-news,
+                                               editorial-videos, editorial-slides,
+                                               editorial-where-to-watch, editorial-featured, google-news
+</code></pre>
+<p>Notes on the tree:</p>
+<ul>
+<li><strong>Header &quot;مباشر (Live)&quot; and &quot;مباريات اليوم (Today&#39;s matches)&quot; resolve to the same URL</strong> — there is no dedicated live route; &quot;Live&quot; is a filter state.</li>
+<li><strong>Match tabs are the only JS-tab entity tabs</strong>; competition, team, and player tabs are all real, crawlable URLs with the tab segment inserted between slug and ID.</li>
+<li><strong>Players have no sitemap</strong> — none of the 13 children indexes player pages; they are discoverable only through links (squads, leaderboards, nav, article chips).</li>
+<li>The header&#39;s third item, <strong>كأس العالم 2026 (World Cup 2026)</strong>, is an event-scoped editorial menu (the homepage also carries World Cup theming); researchers flag it as a time-bound state likely to rotate with the sporting calendar — long-term behavior not verified.</li>
+</ul>
+<hr>
+<h2>3. Page-Type Catalog</h2>
+<p>Consistent mini-format per template: <strong>Purpose · URL pattern · Layout blocks (top→bottom) · Key entities · Links emitted · Behaviors</strong>.</p>
+<p>A shared shell wraps every template: global header (logo + 8-item nav + country dropdown + login button) → affiliate-disclaimer strip → main column → compact single-bar footer. Entity pages are <strong>single-column, mobile-first, no sidebar</strong>, with labelled ad slots (إعلان &quot;Ad&quot;) interleaved between modules.</p>
+<h3>3.1 Homepage</h3>
+<ul>
+<li><strong>Purpose:</strong> Aggregation front door — live scores, featured match, curated and regional news, videos, transfers.</li>
+<li><strong>URL:</strong> <code>/</code></li>
+<li><strong>Layout blocks:</strong> the 11-module sequence detailed in §5.3 (live ticker → date-grid schedule → featured-match hero → broadcast block → curated news carousel → World Cup feed → video rail → competition/region news tabs → transfers block → regional news sections → personalised follow-your-team rail).</li>
+<li><strong>Key entities:</strong> matches, teams, competitions, players, articles, videos, broadcast channels.</li>
+<li><strong>Links emitted:</strong> match detail, matches hub, team pages, competition pages, player pages (news-tab form), articles, news hub, transfers hub, external broadcaster sites, external YouTube (video rail).</li>
+<li><strong>Behaviors:</strong> live scores and the personalised rail hydrate client-side; competition/region news tabs are JS toggles; heavy ad-slot interleaving.</li>
+</ul>
+<h3>3.2 Matches hub (live scores / today)</h3>
+<ul>
+<li><strong>Purpose:</strong> Single page for today&#39;s fixtures, live scores, and any other date.</li>
+<li><strong>URL:</strong> <code>/كرة-القدم/مباريات-اليوم</code> (today&#39;s matches) — one URL for &quot;Live&quot; and &quot;Today&quot;.</li>
+<li><strong>Layout blocks:</strong> (1) date strip (7 days centered on today) + monthly calendar grid; (2) filter tabs الكل All / مباشر Live (with live-count badge) / المفضلة Favorites; (3) match list grouped under competition section headers (flag + competition name + country + round label, header links to competition page); (4) match rows.</li>
+<li><strong>Match-row anatomy:</strong> home crest+name | score or kickoff time | away crest+name | status label (live minute <code>8&#39;</code>, مباشر live, مؤجلة postponed, finished) | broadcaster block &quot;شاهد مباشرة على&quot; (watch live on) with channel logos and <strong>external</strong> watch links.</li>
+<li><strong>Key entities:</strong> matches, teams, competitions, broadcasters.</li>
+<li><strong>Links emitted:</strong> exactly five types per row — match detail, home team, away team, competition (group header), external broadcaster.</li>
+<li><strong>Behaviors:</strong> date switching, live filter, and favorites are all client-side XHR on the same URL (<code>?date=</code> is ignored; path-date probe returned 404). Favorites tie into the login/follow system.</li>
+</ul>
+<h3>3.3 Match detail (+ 6 JS tabs)</h3>
+<ul>
+<li><strong>Purpose:</strong> Full match center for one fixture.</li>
+<li><strong>URL:</strong> <code>/كرة-القدم/مباراة/‹home›-v-‹away›/‹matchId›</code> — joiner <code>-v-</code> or <code>-ضد-</code> (&quot;vs&quot;), both resolve to the same ID. Match IDs are ~21-char <strong>mixed-case</strong> alphanumeric, occasionally hyphenated (a different format from team/player IDs).</li>
+<li><strong>Layout blocks (header zone):</strong> competition badge + round (links to competition) → date/time → home crest+name | score + live-minute badge (or kickoff time) | away crest+name → venue (plain text, unlinked) → broadcast channels with external watch links.</li>
+<li><strong>Tabs (all client-side JS, single URL):</strong> Overview/Summary (default; label نظرة عامة on a live match, المُلخص on the post-match sample) · الأحداث الرئيسية Key events · التشكيلة Lineups · تعليق Commentary · ترتيب Standings · مناقشة Discussion.</li>
+<li><strong>Overview modules in order:</strong> live broadcast widget → توقع الفائز 3-way prediction poll with live percentages → standings snippet (mini table, team rows linked) → match statistics (possession, xG, shots, corners, fouls) → detailed stats groups (attacking/defensive/disciplinary) → match-details footer block (competition, date, venue, broadcaster recap).</li>
+<li><strong>Key entities:</strong> match, teams, players (lineups), competition, standings, broadcasters.</li>
+<li><strong>Links emitted:</strong> both team pages, competition page, external broadcaster links. No coach/referee/stadium links.</li>
+<li><strong>Behaviors:</strong> tab content (lineups, commentary…) is hydrated via XHR and absent from server HTML; probed tab-suffix URL returned 404; ~50% of sitemap match entries carry a <code>#التشكيلة</code> (lineup) fragment confirming client-side tab routing. Tab set may vary by match state (only live + post-match states sampled).</li>
+</ul>
+<h3>3.4 Broadcast schedule</h3>
+<ul>
+<li><strong>Purpose:</strong> TV/streaming guide — where and when to watch.</li>
+<li><strong>URL:</strong> <code>/أحداث-رياضية/كرة-القدم</code> (sports-events / football); header nav label جدول البث (broadcast schedule).</li>
+<li><strong>Layout blocks:</strong> title block → date tabs (اليوم Today + next 6 days; JS, no URLs) → competition-grouped listing → cards: competition logo+name | team crests+names | time or مباشر live badge | broadcaster logo+name | external watch link.</li>
+<li><strong>Key entities:</strong> matches, competitions, broadcast channels.</li>
+<li><strong>Links emitted:</strong> match detail, competition page, external broadcaster sites; a sport switcher linking to the other-sport CMS hubs (<code>/تنس/‹blt›</code> etc. — those siblings are news hubs, not broadcast grids).</li>
+<li><strong>Behaviors:</strong> date tabs client-side; full-width cards, no sidebar.</li>
+</ul>
+<h3>3.5 Competitions index</h3>
+<ul>
+<li><strong>Purpose:</strong> Directory of every league and cup.</li>
+<li><strong>URL:</strong> <code>/كل-البطولات</code> (all tournaments). Heading: &quot;جميع الدوريات والمسابقات للرجال&quot; (all leagues and men&#39;s competitions).</li>
+<li><strong>Layout blocks:</strong> filter bar (الكل All | شائع Popular | جميع الدول All countries | دوري League type | رجال Men) → مسابقات عالمية international/continental block → country groups sorted alphabetically in Arabic, each expanding to that country&#39;s leagues <strong>and</strong> domestic cups together.</li>
+<li><strong>Key entities:</strong> competitions, countries.</li>
+<li><strong>Links emitted:</strong> competition hubs (<code>/كرة-القدم/مسابقة/‹slug›/‹id›</code>).</li>
+<li><strong>Behaviors:</strong> one long filterable list; no pagination, no in-page search.</li>
+</ul>
+<h3>3.6 Competition hub (معلومات Info, default tab)</h3>
+<ul>
+<li><strong>Purpose:</strong> Landing page per competition.</li>
+<li><strong>URL:</strong> <code>/كرة-القدم/مسابقة/‹slug›/‹id›</code> — clubs competitions and tournaments share one template.</li>
+<li><strong>Layout blocks:</strong> identity block (badge + Arabic name; <strong>no follow button, no season selector</strong>) → 5-tab bar → news feed (cards: image+headline+timestamp) → matches strip (recent/upcoming) → mini standings widget (top 5, links to standings tab) → team-crests grid (all clubs, linked) → footer.</li>
+<li><strong>Key entities:</strong> competition, articles, matches, teams, standings.</li>
+<li><strong>Links emitted:</strong> tab URLs, articles, match details, team pages.</li>
+<li><strong>Behaviors:</strong> tabs are real URLs (segment between slug and ID). <strong>League vs tournament:</strong> identical tab set; differences live inside tabs — World Cup standings tab renders 12 group tables (no qualification color legend, no bracket view); its matches tab adds knockout round entries (1/16, 1/8, ربع النهائي quarter-final, نصف النهائي semi-final, برونز bronze, النهائي final) and prominent per-fixture broadcast info; its hub adds a FAQ/SEO module. Pages are pinned to the current season (&quot;أحدث موسم&quot; latest season) — no historical-season access found.</li>
+</ul>
+<h4>3.6.1 Standings tab (label ترتيب, slug جدول)</h4>
+<ul>
+<li><strong>URL:</strong> <code>/كرة-القدم/مسابقة/‹slug›/جدول/‹id›</code></li>
+<li><strong>Blocks:</strong> full table — columns (RTL order): مركز position | فريق team (crest + linked name) | played | wins | draws | losses | goals for | goals against | +/- | نقاط points | نتائج form strip → qualification color legend (CL/EL/Conference/relegation; leagues only) → المستوى filter: الكل All | الذهاب first half | الإياب second half of season.</li>
+<li><strong>Links emitted:</strong> team pages. <strong>Behaviors:</strong> tournament variant = one table per group with a &quot;الجولة القادمة&quot; (next round) strip per group.</li>
+</ul>
+<h4>3.6.2 Matches tab (المباريات, slug مباريات)</h4>
+<ul>
+<li><strong>URL:</strong> <code>/كرة-القدم/مسابقة/‹slug›/مباريات/‹id›</code></li>
+<li><strong>Blocks:</strong> round selector (الجولة 1→38 for a 20-team league; group rounds + knockout stages for tournaments) → date headers inside the round → match rows (crests, full+abbreviated names, score or kickoff time, status badge e.g. انتهت finished).</li>
+<li><strong>Links emitted:</strong> match detail pages. <strong>Behaviors:</strong> one round per view, no pagination, no fixtures/results toggle.</li>
+</ul>
+<h4>3.6.3 Top players tab (أفضل اللاعبين, slug أفضل-اللاعبين)</h4>
+<ul>
+<li><strong>URL:</strong> <code>/كرة-القدم/مسابقة/‹slug›/أفضل-اللاعبين/‹id›</code></li>
+<li><strong>Blocks:</strong> stacked ~top-10 leaderboards (not sub-tabs): top scorers, assists/contributions, red cards, yellow cards, shots on target, fouls committed, fouls suffered, tackles, offsides. Row = rank | team crest | linked player name | value.</li>
+<li><strong>Links emitted:</strong> player pages. <strong>Behaviors:</strong> no season/stat filters observed.</li>
+</ul>
+<p><em>(News tab أخبار = full-length version of the hub&#39;s news card list; not fetched separately.)</em></p>
+<h3>3.7 Club team page (معلومات Info, default tab)</h3>
+<ul>
+<li><strong>Purpose:</strong> Club landing page.</li>
+<li><strong>URL:</strong> <code>/كرة-القدم/فريق/‹slug›/‹id›</code> — same pattern serves clubs and national teams.</li>
+<li><strong>Layout blocks:</strong> identity header (crest + Arabic name; SEO title formula &quot;‹team› النتائج والإحصائيات وأبرز اللقطات&quot; — results, stats, highlights) → 7-tab bar → team news feed (~5 featured + more-news link) → recent/next matches module → league-table snippet (top 5, links to standings tab) → latest completed match card → footer.</li>
+<li><strong>Key entities:</strong> team, articles, matches, standings.</li>
+<li><strong>Links emitted:</strong> tab URLs, articles, match details, opponent teams; player links only via news items on the Info tab.</li>
+<li><strong>Behaviors:</strong> tabs are real URLs; no transfers tab at team level.</li>
+</ul>
+<h4>3.7.1 Squad tab (قائمة اللاعبين, slug قائمة-اللاعبين)</h4>
+<ul>
+<li><strong>URL:</strong> <code>/كرة-القدم/فريق/‹slug›/قائمة-اللاعبين/‹id›</code></li>
+<li><strong>Blocks:</strong> four position groups in order — حراس المرمى goalkeepers, المدافعون defenders, خط الوسط midfielders, المهاجمون forwards → player cards (headshot, jersey number, linked name, season stat figures) → coach at bottom (name + headshot, <strong>not linked</strong> — no coach entity).</li>
+<li><strong>Links emitted:</strong> player pages.</li>
+</ul>
+<h4>3.7.2 Team matches tab (المباريات, slug مباريات)</h4>
+<ul>
+<li><strong>URL:</strong> <code>/كرة-القدم/فريق/‹slug›/مباريات/‹id›</code></li>
+<li><strong>Blocks:</strong> competition dropdown (جميع المسابقات all competitions) + <strong>season selector</strong> (multi-season archive — notably present here but absent on competition pages) → month-header chronological list → rows: crests+names, score/kickoff, status, competition label, date; knockout ties show aggregate (&quot;مجموع 3 - 1&quot;).</li>
+<li><strong>Links emitted:</strong> match detail pages.</li>
+</ul>
+<p><em>(Team standings tab جدول and top-players tab أفضل-اللاعبين not fetched — assumed standard table/leaderboard layouts; flagged as a gap.)</em></p>
+<h3>3.8 National team variant</h3>
+<ul>
+<li><strong>Purpose / URL:</strong> same <code>فريق</code> pattern and template as clubs, with deltas:</li>
+<li><strong>Differences:</strong> 6 tabs (<strong>no أفضل اللاعبين Top players tab</strong>) · standings tab shows tournament/group standings instead of a league table · no standings snippet on the Info tab · matches mix المباريات الودية friendlies with tournament fixtures, with more prominent broadcast badges · identity header is crest/flag only (no confederation badge, no stadium info).</li>
+</ul>
+<h3>3.9 Player page</h3>
+<ul>
+<li><strong>Purpose:</strong> Player profile, stats, career, news.</li>
+<li><strong>URL:</strong> <code>/كرة-القدم/لاعب/‹slug›/‹id›</code> (default = إحصائيات Statistics). Most internal links point at the news-tab form <code>/لاعب/‹slug›/أخبار/‹id›</code>.</li>
+<li><strong>Layout blocks (stats default):</strong> bio header (large photo + name overlay; current club crest + <strong>linked club name</strong> — the only entity link in the bio; fields: الجنسية nationality, رقم القميص shirt number, تاريخ الميلاد birthdate, العمر age, المركز position; no height/market value; national team not linked) → filters (competition dropdown + season selector back to 2015/16) → stats table with <strong>three columns: club / national team / total</strong> and Arabic metric rows (appearances, starts, minutes, goals, assists, penalty goals, missed penalties, shots on/off target, yellow/red cards, offsides).</li>
+<li><strong>Tabs (3, real URLs):</strong> إحصائيات Statistics (default, no segment) · مسيرة-اللاعب Career path / transfer history · أخبار News (reduced header; chronological feed with thumbnail, headline, topic tag, timestamp; &quot;أقدم&quot; Older pagination).</li>
+<li><strong>Links emitted:</strong> club page, articles. <strong>Behaviors:</strong> no videos tab at player level (unlike teams).</li>
+</ul>
+<h3>3.10 News hub</h3>
+<ul>
+<li><strong>Purpose:</strong> Site-wide latest-news archive.</li>
+<li><strong>URL:</strong> <code>/أخبار</code>; page N at <code>/أخبار/‹N›</code>. Title pattern: &quot;أخبار كرة القدم صفحة 1&quot; (Football News Page 1).</li>
+<li><strong>Layout blocks:</strong> hero/featured card (large image + headline) → reverse-chronological card grid — card anatomy: thumbnail (~300×200), headline ≤2 lines, optional subtitle, timestamp (HH:MM + Arabic date), contextual entity label (team or match pairing); no author/comment/view counts on cards → &quot;أقدم&quot; (Older) link.</li>
+<li><strong>Key entities:</strong> articles (+ their tagged entities).</li>
+<li><strong>Links emitted:</strong> article pages.</li>
+<li><strong>Behaviors:</strong> <strong>no own category tabs or filters</strong> — scoped news lives on entity pages instead; server-side path pagination, no infinite scroll; no sidebar.</li>
+</ul>
+<h3>3.11 News article</h3>
+<ul>
+<li><strong>Purpose:</strong> Single editorial story (also the base for video/where-to-watch/featured sub-types — distinguished by sitemap membership and slug keywords, not URL segment).</li>
+<li><strong>URL:</strong> <code>/كرة-قدم/أخبار/‹headline-slug›/‹blt›</code> (listicles: <code>/كرة-قدم/القوائم/‹slug›/‹blt›</code>). No date in URLs. <code>--</code> double hyphen marks stripped punctuation.</li>
+<li><strong>Layout blocks:</strong> shared header (no breadcrumb) → <strong>topic chips</strong> — linked entity tags (team, competition, country, player, sport section) → H1 headline → byline (author name <strong>linked to author page</strong>) + publish date/time → hero media slot (one licensed agency photo with credit) → plain-paragraph body (no subheads/inline embeds in sample) → &quot;اقرأ أيضًا&quot; (Read also) related block (~4 cards) → footer.</li>
+<li><strong>Key entities:</strong> article, author, tagged entities.</li>
+<li><strong>Links emitted:</strong> entity hubs via chips, author page, related articles.</li>
+<li><strong>Behaviors:</strong> no comments, no share buttons, no sidebar; single-column with ad slots.</li>
+</ul>
+<h3>3.12 Videos hub</h3>
+<ul>
+<li><strong>Purpose:</strong> Internal video-article archive.</li>
+<li><strong>URL:</strong> <code>/فيديوهات</code>; page N at <code>/فيديوهات/‹N›</code>.</li>
+<li><strong>Layout blocks:</strong> featured grid (~6 cards) → further card grids → &quot;أقدم&quot; pagination. Card: thumbnail (JPG+WebP), &quot;فيديو:&quot; -prefixed headline, contextual subtitle, match/team label, date, short time value. No view counts or channel attribution.</li>
+<li><strong>Links emitted:</strong> internal video-article pages (not YouTube). <strong>Behaviors:</strong> no category tabs; single mixed feed. (The homepage &quot;YallaGoal&quot; rail is separate — it deep-links to YouTube.)</li>
+</ul>
+<h3>3.13 Video detail</h3>
+<ul>
+<li><strong>Purpose:</strong> Video story. <strong>It is the standard article template</strong> (same <code>/كرة-قدم/أخبار/‹slug›/‹blt›</code> pattern) with deltas:</li>
+<li><strong>Deltas:</strong> custom/self-hosted <strong>video player replaces the hero image</strong> (not a bare YouTube iframe) · &quot;فيديو:&quot; headline prefix retained · short contextual paragraphs after the player · related block headed &quot;قد يعجبك أيضاً&quot; (You may also like) mixing articles and match coverage · topic chips may include a <strong>match-page chip</strong> linking to the match entity.</li>
+</ul>
+<h3>3.14 Transfers feed</h3>
+<ul>
+<li><strong>Purpose:</strong> Transfer-news vertical.</li>
+<li><strong>URL:</strong> <code>/الإنتقالات/‹id25›</code> (al-intiqalat = transfers); page N at <code>/الإنتقالات/‹N›/‹id25›</code> — page number <strong>between slug and ID</strong>. Slug is served NFD-encoded (see §4 gotchas). Modeled as a category/section entity (competition-style ID), not a special app.</li>
+<li><strong>Layout blocks:</strong> hub title → chronological feed of 20+ transfer-article cards (image, destination-club tag, headline, subtitle, timestamp — the standard news card).</li>
+<li><strong>Behaviors:</strong> <strong>pure news feed, no data product</strong> — no confirmed-deals table, no window (summer/winter) organization, no league/club/rumor-status filters. Items link to ordinary article URLs.</li>
+</ul>
+<h3>3.15 Shop feed</h3>
+<ul>
+<li><strong>Purpose:</strong> Commerce-editorial section (&quot;تسوق مع كووورة&quot; Shop with Kooora) — <strong>not a storefront</strong>.</li>
+<li><strong>URL:</strong> <code>/التسوق-الرياضي/‹id25›</code> (sports shopping); page N at <code>/التسوق-الرياضي/‹N›/‹id25›</code>.</li>
+<li><strong>Layout blocks:</strong> standard article-card feed of buying guides (ticket guides at sample time), newest first.</li>
+<li><strong>Behaviors:</strong> no product grid, prices, cart, or visible affiliate markers in the listing; no sub-categories or filters. Items link to normal article URLs.</li>
+</ul>
+<h3>3.16 Other-sport vertical hub</h3>
+<ul>
+<li><strong>Purpose:</strong> News-only section per secondary sport (tennis, Formula 1, basketball, handball, volleyball, futsal).</li>
+<li><strong>URL:</strong> <code>/‹sport-slug›/‹blt›</code> (e.g. <code>/تنس/blta843d4a7d2cc7ebc</code>); page N at <code>/‹sport-slug›/‹N›/‹blt›</code>. Articles namespaced under the sport: <code>/‹sport-slug›/أخبار/‹slug›/‹blt›</code>.</li>
+<li><strong>Layout blocks:</strong> shared header → hero background → featured card + secondary card + standard card grid → &quot;أقدم&quot; pagination → footer. No sidebar.</li>
+<li><strong>Behaviors:</strong> verified on tennis: <strong>no scores, standings, or tournament sub-navigation</strong> — none of the football infrastructure. Same template engine and URL shape strongly implies the other five verticals are identical (only tennis depth-probed).</li>
+</ul>
+<h3>3.17 Country hub</h3>
+<ul>
+<li><strong>Purpose:</strong> Per-country football hub (20 countries in the sitemap; also reached via article topic chips).</li>
+<li><strong>URL:</strong> <code>/كرة-القدم/دولة/‹country-name›/‹iso3›</code> — ID is a human-readable lowercase 3-letter football code (egy, ksa, mar, eng…), the only non-opaque ID class on the site. Multi-word country names keep <strong>literal spaces</strong> (<code>%20</code>), uniquely among all entities.</li>
+<li><strong>Layout / entities / links:</strong> <strong>internals not verified</strong> — no researcher fetched a country hub page; existence and URL pattern are sitemap- and chip-verified only.</li>
+</ul>
+<h3>3.18 Author &amp; category archives</h3>
+<ul>
+<li><strong>Author page</strong> — <code>/مؤلف/‹slug›/‹id›</code>; ID is legacy numeric (11, 140, 270…) <strong>or</strong> CMS <code>blt</code> ID; slugs may be Arabic or Latin; 100 authors in the sitemap. Linked from article bylines. <strong>Page internals not verified</strong> (not fetched).</li>
+<li><strong>Category hubs</strong> — the categories sitemap lists exactly 7 section hubs: the six other-sport verticals (3.16) + sports shopping (3.15); those templates are documented above.</li>
+</ul>
+<h3>3.19 Legal / static pages</h3>
+<ul>
+<li><strong>Purpose:</strong> Utility content. <strong>URLs:</strong> <code>/سياسة-الخصوصية</code> privacy policy · <code>/سياسة-الاستخدام</code> terms (slug literally &quot;usage policy&quot;) · <code>/اتصل-بنا</code> contact us. Arabic slugs, <strong>no trailing IDs</strong> — the only ID-less detail pages on the site. Listed in <code>main.xml</code> alongside home and <code>/كل-البطولات</code>. (No about-us, careers, advertise, or editorial-policy pages exposed in the shared footer.)</li>
+</ul>
+<hr>
+<h2>4. URL Pattern Map</h2>
+<p>All paths relative to <code>https://www.kooora.com</code>. Arabic shown percent-decoded. <code>‹id25›</code> = ~21–25-char lowercase base-36 sports-data ID · <code>‹idM›</code> = ~21-char mixed-case match ID (may contain hyphens) · <code>‹blt›</code> = <code>blt</code>+16 lowercase hex CMS UID.</p>
+<table>
+<thead>
+<tr>
+<th>Pattern template</th>
+<th>Entity / view</th>
+<th>ID system</th>
+<th>Example (decoded)</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/</code></td>
+<td>Homepage</td>
+<td>—</td>
+<td><code>/</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>/كرة-القدم/مباريات-اليوم</code></td>
+<td>Matches hub (today + live + all dates)</td>
+<td>—</td>
+<td>—</td>
+<td>Single URL; dates/filters are client state; <code>?date=</code> ignored; path dates 404</td>
+</tr>
+<tr>
+<td><code>/كرة-القدم/مباراة/‹home›-v-‹away›/‹idM›</code></td>
+<td>Match detail (all 6 tabs)</td>
+<td>mixed-case match ID</td>
+<td><code>/كرة-القدم/مباراة/كوريا-الجنوبية-v-تشيكيا/fE4Kl8TDt5GkVQ9xvEl14</code></td>
+<td>Joiner <code>-v-</code> or <code>-ضد-</code>, same ID; tabs JS-only; <code>#التشكيلة</code> fragment deep-links lineups</td>
+</tr>
+<tr>
+<td><code>/كرة-القدم/مسابقة/‹slug›/‹id25›</code></td>
+<td>Competition hub (Info tab)</td>
+<td>base-36</td>
+<td><code>/كرة-القدم/مسابقة/كأس-العالم/70excpe1synn9kadnbppahdn7</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>/كرة-القدم/مسابقة/‹slug›/‹tab›/‹id25›</code></td>
+<td>Competition tab</td>
+<td>base-36</td>
+<td><code>/كرة-القدم/مسابقة/الدوري-الإنجليزي-الممتاز/جدول/2kwbbcootiqqgmrzs6o5inle5</code></td>
+<td><code>‹tab›</code> ∈ أخبار news · مباريات matches · جدول standings · أفضل-اللاعبين top players</td>
+</tr>
+<tr>
+<td><code>/كرة-القدم/فريق/‹slug›/‹id25›</code></td>
+<td>Team page (Info tab)</td>
+<td>base-36</td>
+<td><code>/كرة-القدم/فريق/ريال-مدريد/3kq9cckrnlogidldtdie2fkbl</code></td>
+<td>Clubs + national teams, one namespace</td>
+</tr>
+<tr>
+<td><code>/كرة-القدم/فريق/‹slug›/‹tab›/‹id25›</code></td>
+<td>Team tab</td>
+<td>base-36</td>
+<td><code>/كرة-القدم/فريق/ريال-مدريد/قائمة-اللاعبين/3kq9cckrnlogidldtdie2fkbl</code></td>
+<td><code>‹tab›</code> ∈ أخبار · فيديوهات videos · مباريات · قائمة-اللاعبين squad · جدول · أفضل-اللاعبين (clubs only)</td>
+</tr>
+<tr>
+<td><code>/كرة-القدم/لاعب/‹slug›/‹id25›</code></td>
+<td>Player page (Stats tab)</td>
+<td>base-36</td>
+<td><code>/كرة-القدم/لاعب/كيليان-مبابي/5e9ilgrz3tzg9kd1gk3yvrahh</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>/كرة-القدم/لاعب/‹slug›/‹tab›/‹id25›</code></td>
+<td>Player tab</td>
+<td>base-36</td>
+<td><code>/كرة-القدم/لاعب/محمد-صلاح/أخبار/5ilkkfbsss0bxd6ttdlqg0uz9</code></td>
+<td><code>‹tab›</code> ∈ أخبار news · مسيرة-اللاعب career; nav links use the news form</td>
+</tr>
+<tr>
+<td><code>/كرة-القدم/دولة/‹name›/‹iso3›</code></td>
+<td>Country hub</td>
+<td>3-letter code</td>
+<td><code>/كرة-القدم/دولة/مصر/egy</code></td>
+<td>Multi-word names keep literal spaces: <code>المملكة العربية السعودية/ksa</code></td>
+</tr>
+<tr>
+<td><code>/كرة-قدم/أخبار/‹slug›/‹blt›</code></td>
+<td>Editorial article (news / video / where-to-watch / featured)</td>
+<td>blt</td>
+<td><code>/كرة-قدم/أخبار/…/blt9153ffc689ab3cad</code></td>
+<td>4 sub-types share one path; distinguished by sitemap + slug keywords</td>
+</tr>
+<tr>
+<td><code>/كرة-قدم/القوائم/‹slug›/‹blt›</code></td>
+<td>Listicle / slideshow</td>
+<td>blt</td>
+<td><code>/كرة-قدم/القوائم/…/bltee7e56aa6da72486</code></td>
+<td>Only editorial sub-type with its own segment</td>
+</tr>
+<tr>
+<td><code>/أخبار</code> → <code>/أخبار/‹N›</code></td>
+<td>News hub + pages</td>
+<td>—</td>
+<td><code>/أخبار/2</code></td>
+<td>&quot;أقدم&quot; (Older) link; H1 shows &quot;صفحة N&quot;</td>
+</tr>
+<tr>
+<td><code>/فيديوهات</code> → <code>/فيديوهات/‹N›</code></td>
+<td>Videos hub + pages</td>
+<td>—</td>
+<td><code>/فيديوهات/2</code></td>
+<td>Internal video articles, not YouTube</td>
+</tr>
+<tr>
+<td><code>/الإنتقالات/‹id25›</code> → <code>/الإنتقالات/‹N›/‹id25›</code></td>
+<td>Transfers hub + pages</td>
+<td>base-36</td>
+<td><code>/الإنتقالات/k94w8e1yy9ch14mllpf4srnks</code></td>
+<td>Page number between slug and ID; NFD encoding mandatory</td>
+</tr>
+<tr>
+<td><code>/التسوق-الرياضي/‹id25›</code> → <code>/التسوق-الرياضي/‹N›/‹id25›</code></td>
+<td>Shop feed + pages</td>
+<td>base-36</td>
+<td><code>/التسوق-الرياضي/jay1lq18ea7j1bks90cjvzor9</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>/أحداث-رياضية/كرة-القدم</code></td>
+<td>Broadcast schedule (football)</td>
+<td>—</td>
+<td>—</td>
+<td>Date tabs JS-only</td>
+</tr>
+<tr>
+<td><code>/كل-البطولات</code></td>
+<td>Competitions index</td>
+<td>—</td>
+<td>—</td>
+<td>In <code>main.xml</code></td>
+</tr>
+<tr>
+<td><code>/‹sport-slug›/‹blt›</code> → <code>/‹sport-slug›/‹N›/‹blt›</code></td>
+<td>Other-sport hub + pages</td>
+<td>blt</td>
+<td><code>/تنس/blta843d4a7d2cc7ebc</code></td>
+<td>6 sports; CMS section entities</td>
+</tr>
+<tr>
+<td><code>/‹sport-slug›/أخبار/‹slug›/‹blt›</code></td>
+<td>Other-sport article</td>
+<td>blt</td>
+<td><code>/تنس/أخبار/…/blt60ca310c191e8b12</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>/مؤلف/‹slug›/‹id›</code></td>
+<td>Author page</td>
+<td>legacy numeric <strong>or</strong> blt</td>
+<td><code>/مؤلف/عبدالاعلى-سكير/11</code></td>
+<td>Slugs Arabic or Latin; mixed ID scheme = platform migration artifact</td>
+</tr>
+<tr>
+<td><code>/‹static-slug›</code></td>
+<td>Legal/static</td>
+<td>none</td>
+<td><code>/سياسة-الخصوصية</code></td>
+<td>Only ID-less detail pages</td>
+</tr>
+<tr>
+<td><code>/sitemap</code>, <code>/sitemap/‹name›.xml</code></td>
+<td>Sitemap system</td>
+<td>—</td>
+<td><code>/sitemap/matches.xml</code></td>
+<td>XML index + 13 children, ≈3,532 URLs</td>
+</tr>
+</tbody></table>
+<p>Generalized grammar for data/editorial entities:</p>
+<pre><code>/{namespace}/{entity-type}/{arabic-slug}/[{tab-or-page-segment}/]{entity-id}
+</code></pre>
+<h3>4.1 Implementation gotchas (verified by probing)</h3>
+<ol>
+<li><strong>Trailing entity IDs are mandatory.</strong> The slug is decoration; the ID is the canonical key. ID-less URLs 404 (probed: <code>/كرة-القدم/مسابقة/كاس-العالم/أخبار</code> → 404; <code>/انتقالات</code> bare → 404).</li>
+<li><strong>Unicode normalization is inconsistent and load-bearing.</strong> Canonical data-page and section URLs encode hamza in <strong>NFD-decomposed</strong> form (alef U+0627 + combining hamza U+0654/0655), e.g. الإنتقالات served as <code>%D8%A7%D9%84%D8%A7%D9%95%D9%86%D8%AA%D9%82%D8%A7%D9%84%D8%A7%D8%AA</code>; requests with <strong>NFC-composed</strong> hamza (<code>%D8%A5</code>…) returned <strong>404</strong>. Editorial segments meanwhile use precomposed forms. Crawlers must preserve encodings verbatim; dedupers must normalize before comparing.</li>
+<li><strong>Literal <code>%20</code> spaces in country slugs</strong> — country hubs are the only entity keeping spaces instead of hyphens (<code>المملكة العربية السعودية/ksa</code>).</li>
+<li><strong>Fragments inside sitemap entries</strong> — ~50% of <code>matches.xml</code> URLs end in <code>#التشكيلة</code> (lineups), which is non-standard in sitemaps and signals client-side tab routing.</li>
+<li><strong>Zero query parameters site-wide</strong> — no <code>?page=</code>/<code>?date=</code> anywhere in ~3.5k sitemap URLs or navigation; pagination is always a <strong>path segment</strong> (<code>/أخبار/2</code>), inserted <strong>before the trailing ID</strong> when the hub has one (<code>/الإنتقالات/2/‹id›</code>).</li>
+<li><strong>Tab segments sit between slug and ID</strong> (<code>/مسابقة/‹slug›/جدول/‹id›</code>) — an unusual ordering any router/crawler must accommodate.</li>
+<li><strong>Tab label ≠ tab slug</strong> — standings tabs are labelled ترتيب (ranking) but routed as جدول (table) on both competitions and teams.</li>
+<li><strong>Two joiners for the same match</strong> — <code>-v-</code> and <code>-ضد-</code> slugs both resolve to the identical match ID.</li>
+<li><strong>The two football namespaces differ by one character cluster</strong> (definite article ال): <code>كرة-القدم</code> = data platform, <code>كرة-قدم</code> = CMS. Easy to conflate; routing-critical.</li>
+<li><strong>Raw Arabic and percent-encoded URL forms both resolve</strong> identically (subject to gotcha 2).</li>
+</ol>
+<hr>
+<h2>5. Navigation Map</h2>
+<h3>5.1 Header</h3>
+<p>Structure: logo (→ <code>/</code>) + primary nav bar of <strong>8 items</strong> (most with mega-menu dropdowns; 103 anchors total in the header) + country-dropdown button + login button. No SSR search box.</p>
+<pre><code>كووورة (Kooora logo) ............................... /
+1. مباشر (Live) .................................... /كرة-القدم/مباريات-اليوم
+   +- مباريات اليوم (Today&#39;s matches) .............. /كرة-القدم/مباريات-اليوم
+   +- جدول البث (Broadcast schedule) ............... /أحداث-رياضية/كرة-القدم
+2. أخبار (News) — direct link, no dropdown ......... /أخبار
+3. كأس العالم 2026 (World Cup 2026) — mega-menu, 3 groups
+   +- معلومات (Information)
+   |  +- أخبار (News) .............................. /كرة-القدم/مسابقة/كأس-العالم/أخبار/70excpe1synn9kadnbppahdn7
+   |  +- جدول المباريات (Match schedule) ........... /كرة-القدم/مسابقة/كأس-العالم/مباريات/70excpe1synn9kadnbppahdn7
+   |  +- جدول الترتيب (Standings) .................. /كرة-القدم/مسابقة/كأس-العالم/جدول/70excpe1synn9kadnbppahdn7
+   +- أبرز المنتخبات العالمية (Top international teams) - 6 links
+   |  Argentina, Brazil, France, Portugal, Spain, Germany ... /كرة-القدم/فريق/‹slug›/‹id›
+   +- المنتخبات العربية (Arab national teams) - 8 links
+      Saudi Arabia, Morocco, Egypt, Qatar, Iraq, Jordan, Algeria, Tunisia
+4. مسابقات (Competitions) — mega-menu, 3 groups; /كرة-القدم/مسابقة/‹slug›/‹id›
+   +- مسابقات عالمية (International) - كل المسابقات (All) -&gt; /كل-البطولات,
+   |  World Cup 2026, UEFA CL, AFC CL Elite, CAF CL, UEFA Europa League
+   +- الدول الأوروبية (European) - La Liga, Premier League, Serie A, Bundesliga, Ligue 1
+   +- الدول العربية (Arab) - Saudi Pro League, Egyptian PL, Botola Pro (Morocco),
+      Algerian Ligue 1, Jordanian Pro League, Qatar Stars League, UAE Pro League, Tunisian Ligue 1
+5. فرق (Teams) — mega-menu, 5 country columns x 5 clubs; /كرة-القدم/فريق/‹slug›/‹id›
+   +- إسبانيا Spain: Athletic Bilbao, Atletico Madrid, Barcelona, Real Madrid, Valencia
+   +- إنجلترا England: Arsenal, Chelsea, Liverpool, Man City, Man United
+   +- إيطاليا Italy: Inter, Roma, AC Milan, Napoli, Juventus
+   +- ألمانيا Germany: Leverkusen, Bayern, Dortmund, Schalke 04, Wolfsburg
+   +- فرنسا France: PSG, Lille, Lyon, Marseille, Monaco
+6. رياضات (Sports) — dropdown of 6 non-football verticals; /‹sport-slug›/‹blt›
+   +- التنس Tennis, الفورملا1 F1, كرة السلة Basketball, كرة اليد Handball,
+      الكرة الطائرة Volleyball, قدم الصالات Futsal
+7. اللاعبون (Players) — mega-menu, 6 league columns x 5 players; /كرة-القدم/لاعب/‹slug›/أخبار/‹id›
+   +- Spain: Mbappe, Vinicius Jr, Lamine Yamal, Raphinha, Bellingham
+   +- England: Salah, Haaland, Wirtz, Saka, Palmer
+   +- Saudi Arabia: Ronaldo, Benzema, Mahrez, Al-Dawsari, Nunez
+   +- Germany: Kane, Musiala, Guirassy, Olise, Davies
+   +- France: Hakimi, Dembele, Vitinha, Kvaratskhelia, Doue
+   +- Italy: Lautaro, Dybala, Leao, McTominay, Modric
+8. تسوق مع كووورة (Shop with Kooora) ............... /التسوق-الرياضي/jay1lq18ea7j1bks90cjvzor9
+
+Utility: country dropdown (client-rendered; sets country for broadcast localization - NOT language)
+         login button (client-side auth modal; Google sign-in; favorites/follow teams, newsletters)
+</code></pre>
+<p>A few player links deviate from the standard pattern (no <code>/أخبار</code> segment, or malformed extra segment) — header data-quality artifacts worth avoiding in a rebuild.</p>
+<h3>5.2 Footer</h3>
+<p>A <strong>single compact bar</strong> (not multi-column link lists):</p>
+<table>
+<thead>
+<tr>
+<th>Zone</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Logo + copyright</td>
+<td>Kooora logo → <code>/</code>; text &quot;كل الحقوق محفوظة كووورة© 2026&quot; (All rights reserved)</td>
+</tr>
+<tr>
+<td>App links (2)</td>
+<td>Google Play (<code>com.sikooora</code>) · Apple App Store (id <code>859950269</code>)</td>
+</tr>
+<tr>
+<td>Social (5, icon-only)</td>
+<td>YouTube · Facebook · Instagram · X · TikTok</td>
+</tr>
+<tr>
+<td>Legal nav (4)</td>
+<td>اتصل بنا Contact (<code>/اتصل-بنا</code>) · ملفات الارتباط Cookies (consent <strong>button</strong>, no href) · سياسة الخصوصية Privacy (<code>/سياسة-الخصوصية</code>) · الشروط والاحكام Terms (<code>/سياسة-الاستخدام</code>)</td>
+</tr>
+</tbody></table>
+<p>Not present: language/region switcher, sitemap link, about-us, advertising page. An RSS feed is declared in <code>&lt;head&gt;</code> (<code>feeds.footballco.com/kooora/feed/…</code>) but is not surfaced in the footer.</p>
+<h3>5.3 Homepage module sequence (11 ordered modules)</h3>
+<p>An affiliate-links disclaimer strip sits directly under the header; labelled ad slots (إعلان) appear between modules throughout.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Module</th>
+<th>Description</th>
+<th>Entities</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>Live scoreboard / ticker</td>
+<td>Horizontal strip &quot;المباريات&quot; with live scores, minute, favorites/settings button; cards link to match detail/preview</td>
+<td>matches, teams, competitions</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Match schedule grid</td>
+<td>Date scroller (~1-month window) + competition filters</td>
+<td>matches, competitions</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Featured match hero</td>
+<td>One spotlighted match: crests, lineups/formations, possession + momentum visuals, player ratings, standings snippet, &quot;اختر الفائز&quot; pick-the-winner widget</td>
+<td>match, teams, players, standings</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Broadcast/streaming block</td>
+<td>Channel logos with outbound viewing links; ties to جدول البث</td>
+<td>matches, broadcasters</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Hero news carousel</td>
+<td>Editorially curated headline slider (prev/next + indicators)</td>
+<td>articles</td>
+</tr>
+<tr>
+<td>6</td>
+<td>World Cup 2026 news feed</td>
+<td>Competition-scoped chronological list (event theming active at capture)</td>
+<td>articles, competition</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Video rail (&quot;YallaGoal&quot;)</td>
+<td>Branded video series cards — deep-links <strong>directly to YouTube</strong> (unlike <code>/فيديوهات</code>)</td>
+<td>videos</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Competition/region news tabs</td>
+<td>JS-tabbed article lists (World Cup, Premier League, La Liga, Saudi League, Morocco, Egypt)</td>
+<td>articles, competitions</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Transfers block</td>
+<td>Transfer-market article cluster → transfers hub</td>
+<td>articles, players, teams</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Regional news sections</td>
+<td>Country blocks (Saudi Arabia, England, Spain, Morocco, Egypt) + &quot;المزيد من الأخبار&quot; more-news → <code>/أخبار</code></td>
+<td>articles</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Personalised rail</td>
+<td>&quot;اختر فريقك المفضل&quot; (pick your favorite team) follow-onboarding; client-hydrated</td>
+<td>teams, user prefs</td>
+</tr>
+</tbody></table>
+<h3>5.4 Internal-linking graph</h3>
+<pre><code>                          HOMEPAGE
+       (links to every hub + entities via 11 modules)
+            |        |        |        |        |
+            v        v        v        v        v
+        Matches    News    Compet.   Teams   Players
+          hub      hub      hubs     pages    pages
+           |        |         ^ ^      ^ ^      ^
+           |        v         | |      | |      |
+           |     ARTICLE -----+ |      | |      |
+           |     topic chips ---+------+ |      |
+           |      |     \________________|______+--&gt; Country hub
+           |      v                      |      |
+           |    Author page              |      |
+           v                             |      |
+        MATCH detail &lt;---- Competition --+      |
+         | | | |            matches tab  |      |
+         | | | +--&gt; external broadcaster |      |
+         | | +----&gt; competition page     |      |
+         | +------&gt; home/away team ------+      |
+         |              |                       |
+         |              +--&gt; squad tab ---------+--&gt; Player page
+         |              +--&gt; standings rows --&gt; other teams
+         |                                      |
+         +--&lt; video-article match chip          +--&gt; current club (bio header)
+   Competition top-players rows ----------------+
+</code></pre>
+<p>Bullet rules (each verified on raw pages):</p>
+<ul>
+<li><strong>Match row emits exactly five link types:</strong> match detail, home team, away team, competition (via group header), external broadcaster.</li>
+<li><strong>Article → entities:</strong> topic chips link to team, competition, country, player, and sport hubs; the byline links to the author page; related-articles blocks link to other articles; video articles may additionally chip-link to a <strong>match page</strong>.</li>
+<li><strong>Competition → teams/players/matches:</strong> crest grid and standings rows → team pages; top-players rows → player pages; matches tab rows → match details; news tab → articles.</li>
+<li><strong>Team → players/matches:</strong> squad rows → player pages (coach NOT linked); matches tab → match details; standings tab → other teams; news/videos tabs → articles.</li>
+<li><strong>Player → club:</strong> the bio header links only the current club (national team unlinked); news tab → articles.</li>
+<li><strong>Dead ends (display-only, no pages):</strong> coach, referee, stadium/venue, broadcaster (external links only).</li>
+<li><strong>Hub cross-links:</strong> matches hub and broadcast schedule cross-link the same match/competition entities; transfers/shop/other-sport feeds link only to articles.</li>
+</ul>
+<hr>
+<h2>6. Language, RTL &amp; Content Organization</h2>
+<ul>
+<li><strong>Document setup:</strong> <code>&lt;html lang=&quot;ar&quot; dir=&quot;rtl&quot; class=&quot;fco-kooora&quot;&gt;</code> — Arabic-only, fully right-to-left. All slugs, labels, and content are Arabic (rare Latin author slugs aside). Standings tables read right-to-left (position column rightmost).</li>
+<li><strong>No internationalization surface:</strong> <code>&lt;head&gt;</code> carries only a canonical link and one RSS alternate — <strong>no hreflang, no English alternate</strong> anywhere. Embedded data sets <code>&quot;edition&quot;:&quot;ar&quot;</code>: Kooora is one edition of the Footballco platform; other languages are sibling sites (e.g., GOAL), not locales of this one.</li>
+<li><strong>Country ≠ language:</strong> the header country dropdown (options client-rendered) localizes <strong>broadcast/TV-channel data</strong> per the user&#39;s country; it is not a language switcher. Per-article <code>geoTargeting</code> arrays (empty in samples) imply optional geo-scoped content.</li>
+<li><strong>Arabic slug conventions:</strong> hyphen-joined words derived from names/headlines; <code>--</code> double hyphen where punctuation was stripped; ضد (&quot;vs&quot;) or <code>-v-</code> as match joiners; slugs are decorative — the trailing ID is canonical; raw and percent-encoded forms both resolve; hamza encoding is mixed NFD/NFC across namespaces (gotcha 4.1.2); one CMS leak observed (<code>copy-of-…</code> slug).</li>
+<li><strong>Categories taxonomy (7):</strong> the categories sitemap defines exactly seven section hubs — tennis, Formula 1, basketball, handball, volleyball, futsal, and sports shopping. Football is <em>not</em> a category: it is the site&#39;s substrate, expressed through the two football namespaces instead.</li>
+<li><strong>Editorial sub-types are sitemap-level, not URL-level:</strong> news, video articles, where-to-watch guides, and featured long-form all share <code>/كرة-قدم/أخبار/…</code>; only listicles get their own segment (<code>/القوائم/</code>). Five editorial sitemaps + a 48-hour Google News sitemap (publication &quot;Kooora.com&quot;, language <code>ar</code>) carry full ISO-8601 lastmod; data sitemaps carry none.</li>
+<li><strong>Regional news organization:</strong> geography is a first-class editorial axis — homepage regional blocks (Saudi Arabia, England, Spain, Morocco, Egypt), Arab-league and Arab-team groupings in the header mega-menus, and 20 country hubs (<code>/كرة-القدم/دولة/…</code>) fed by article country chips. The news hub itself is deliberately unfiltered; scoping happens on entity and country pages.</li>
+<li><strong>Editorial author system:</strong> 100 authors in the sitemap with mixed ID schemes — legacy numeric IDs (migrated from the old kooora platform) alongside CMS <code>blt</code> IDs; author slugs in Arabic or Latin; bylines on every article link to author pages.</li>
+<li><strong>Sitemap philosophy:</strong> a freshness feed, not an archive — top-20 competitions, 20 countries, ~1k recent/upcoming matches, 1,086 teams, rolling editorial window; players entirely absent.</li>
+</ul>
+<hr>
+<h2>7. Blueprint Notes for Building an Original Site</h2>
+<p>Original-design guidance distilled from the study — adopt the <em>lessons</em>, not the surface.</p>
+<h3>7.1 Recommended entity model</h3>
+<p>Make six things first-class entities, each with its own template, stable ID, and hub: <strong>competition, team, player, match, article, video</strong>. Kooora proves this set carries the entire experience. Two extensions Kooora lacks that cost it little to add and would differentiate the client&#39;s site:</p>
+<ul>
+<li><strong>Coach, stadium, referee as linkable entities</strong> (Kooora renders them as dead text).</li>
+<li><strong>Transfers as a structured data product</strong> (player / from / to / fee / status / window), not just an article category — Kooora&#39;s transfers hub is a plain news feed.</li>
+</ul>
+<p>Model &quot;country&quot; as a lightweight taxonomy hub and &quot;author&quot; as a person entity from day one (Kooora&#39;s mixed numeric/CMS author IDs are a visible migration scar).</p>
+<h3>7.2 Routing scheme lessons</h3>
+<ul>
+<li><strong>Readable slug + stable ID works</strong> — keep it, but put the variable parts in saner places: prefer <code>/{entity}/{slug}-{id}</code> or <code>/{entity}/{id}/{slug}</code> over Kooora&#39;s tab-and-page-segments-between-slug-and-ID ordering, which complicates routers and crawlers.</li>
+<li><strong>Make every tab a real URL.</strong> Kooora does this for competition/team/player tabs (good — crawlable, deep-linkable) but uses JS tabs + sitemap fragments for match lineups/commentary/stats (bad — invisible to SEO and unlinkable). Give match sub-views routes.</li>
+<li><strong>Give dates URLs.</strong> Kooora&#39;s matches hub has no date parameter at all (<code>?date=</code> ignored, path dates 404) — a real shareability/SEO gap. Implement <code>/matches/2026-06-12</code>-style routes.</li>
+<li><strong>Normalize Unicode at the router.</strong> Accept NFC and NFD, redirect to one canonical form. Kooora&#39;s decomposed-hamza-only URLs (NFC → 404) are a defect class to design out. Likewise: no literal spaces in slugs, one slug joiner (not two &quot;vs&quot; variants), align tab labels with tab slugs.</li>
+<li><strong>Keep path-segment pagination</strong> (<code>/news/2</code>) — clean and crawlable — and keep query strings out of canonical URLs.</li>
+<li><strong>Avoid namespace pairs distinguishable only by a definite article.</strong> If data and editorial systems need separate namespaces, make them visibly different (e.g., <code>/football/</code> vs <code>/news/</code>).</li>
+</ul>
+<h3>7.3 Section priorities</h3>
+<p>Kooora&#39;s effort allocation is a proven market read for an Arabic sports audience — order of investment:</p>
+<ol>
+<li><strong>Football match center</strong> (live hub + match detail) — the core product; broadcast/&quot;where to watch&quot; info is a first-class feature on every match surface, reflecting real MENA user intent.</li>
+<li><strong>Competition hubs</strong> with standings/fixtures/top-player stats.</li>
+<li><strong>Team and player profiles</strong> with stats and scoped news.</li>
+<li><strong>News engine</strong> (hub + entity-scoped feeds + regional blocks + transfers + videos).</li>
+<li><strong>Secondary sports as light news verticals</strong> — ship feeds first; add data products per sport only when justified.</li>
+</ol>
+<h3>7.4 Weaknesses to improve on (verified gaps in Kooora)</h3>
+<table>
+<thead>
+<tr>
+<th>Kooora gap</th>
+<th>Opportunity for the original site</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>No season selector on competition pages (pinned to current season; team matches tab has one, inconsistently)</td>
+<td>Season-aware competition URLs and archives everywhere</td>
+</tr>
+<tr>
+<td>No bracket/knockout visualization for tournaments (World Cup = 12 flat group tables)</td>
+<td>Proper bracket view + group/knockout toggle</td>
+</tr>
+<tr>
+<td>No team-level transfers tab; transfers hub is articles-only</td>
+<td>Structured transfer center + per-team transfer tabs</td>
+</tr>
+<tr>
+<td>Match tabs JS-only; lineups deep-linked via sitemap <code>#fragments</code></td>
+<td>Routed match sub-pages</td>
+</tr>
+<tr>
+<td>Secondary sports are news-only</td>
+<td>At minimum, scores/schedule modules per sport vertical</td>
+</tr>
+<tr>
+<td>No header search (client-side afterthought)</td>
+<td>Prominent universal entity search</td>
+</tr>
+<tr>
+<td>Coach/referee/stadium unlinked</td>
+<td>Entity pages or at least structured data</td>
+</tr>
+<tr>
+<td>News hub has no filters; no date in article URLs</td>
+<td>Faceted news archive; consider dated URLs for clarity</td>
+</tr>
+<tr>
+<td>Footer minimal — no about/editorial-policy pages</td>
+<td>Trust pages (about, editorial standards, advertising)</td>
+</tr>
+<tr>
+<td>Inconsistent Unicode encoding; duplicate match-slug joiners</td>
+<td>Single normalized canonical form, enforced</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>Appendix: Research provenance</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Report file</th>
+<th>Scope (one line)</th>
+<th>Fetches</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td><code>01-sitemap-url-inventory.md</code></td>
+<td>robots.txt + sitemap index + all 13 child sitemaps; full URL-pattern grammar; ≈3,532 URLs inventoried</td>
+<td>14</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>02-navigation-homepage.md</code></td>
+<td>Header (8 items, mega-menus, 103 anchors) + footer via raw HTML; 11 homepage modules; news + competitions hub sub-navigation; RTL/i18n/account findings</td>
+<td>6</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>03-matches-live-match-detail.md</code></td>
+<td>Matches hub (date nav, filters, row anatomy), live match detail + 6 JS tabs (404-probed), broadcast schedule</td>
+<td>8</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>04-competitions.md</code></td>
+<td>Competitions index + Premier League and World Cup hubs with standings/matches/top-players tabs; league-vs-tournament comparison; season handling</td>
+<td>10</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>05-teams-players.md</code></td>
+<td>Club (Real Madrid) + national team (Morocco) templates and tabs, squad/matches sub-templates, player (Mbappé) template, coach/referee/stadium entity probe</td>
+<td>8</td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>06-news-transfers-videos-other.md</code></td>
+<td>News hub, article + video templates, transfers/shop/videos hubs, 6 other-sport verticals (tennis depth-probed), static pages, NFD-encoding gotcha</td>
+<td>14</td>
+</tr>
+</tbody></table>
+<p><strong>Total: ~60 fetches</strong> (sequential, polite, structure-only), including deliberate 404 probes that established the routing rules in §4.1.</p>
+<p><strong>Residual gaps flagged by researchers (carried forward, not papered over):</strong></p>
+<ul>
+<li><strong>JS-hydrated match-tab internals</strong> — lineup formation graphic, per-player links inside lineups, commentary internals: absent from server HTML, not inspected (no browser/network tooling used).</li>
+<li><strong>Match tab set by state</strong> — only live and post-match samples; pre-match tab set (preview/H2H?) and the Overview-vs-Summary default-label variation not fully mapped.</li>
+<li><strong>XHR/API endpoints</strong> feeding date switches and match tabs — out of scope for polite static fetching.</li>
+<li><strong>Logged-in state</strong> — account area, favorites management, and personalised rail rendered only behind the client-side auth modal; not exercised.</li>
+<li><strong>Rotating editorial surfaces</strong> — the World Cup 2026 header menu and homepage theming are event-scoped snapshots; their off-season behavior is unverified.</li>
+<li><strong>Not fetched:</strong> country hub internals, author page internals, team standings + team top-players tabs, competition news tab (assumed standard variants); five of six other-sport verticals (template inferred from tennis); historical-season access (none found, may not exist).</li>
+</ul>

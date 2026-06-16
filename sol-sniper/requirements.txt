@@ -1,0 +1,38 @@
+# =============================================================================
+# The SIMULATION harness (sniper_sim/) is STDLIB-ONLY — no installs needed.
+#     python -m sniper_sim.demo
+# The deps below are for the PRODUCTION slow-loop, model training, and tooling.
+# The SNIPE + FAST hot path is RUST (see README) — Python is too slow for it.
+# =============================================================================
+
+# ---- Solana (slow loop / tooling only; NOT the hot path) ----
+solders
+solana
+grpcio
+grpcio-tools
+
+# ---- Jupiter (exits/survivors) + Jito (HTTP, non-racing) ----
+httpx
+tenacity
+
+# ---- snipe-model TRAINING (inference runs as ONNX in the Rust hot path) ----
+lightgbm
+onnx
+onnxruntime
+scikit-learn
+pandas
+numpy
+
+# ---- slow-loop reasoning / survivor brain ----
+ollama
+openai
+pydantic
+instructor
+
+# ---- infra / ops / control plane ----
+redis
+prometheus-client
+structlog
+python-dotenv
+fastapi
+uvicorn
