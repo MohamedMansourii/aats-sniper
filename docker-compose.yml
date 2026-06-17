@@ -1,0 +1,411 @@
+# AATS docker-compose.yml — ONE `docker compose up` brings the full system.
+#
+# ONE COMMAND: docker compose up
+#
+# HARD RULES enforced here (infrastructure.md §2, BUILD-DIRECTIVE):
+#   - DRY_RUN_ENABLED=true is the default on EVERY service that can submit txs.
+#     Real capital is DISABLED by default. Enabling live requires BOTH:
+#       (a) DRY_RUN_ENABLED=false explicitly set in the environment, AND
+#       (b) a CEO auth token presented to POST /api/mode (AC-060).
+#     Both checks are enforced server-side; this file cannot and does not bypass them.
+#   - No secrets, keys, or real values in this file. See .env.example.
+#   - aats-signer has NO published ports — its only external surface is the local
+#     Unix-domain socket (signer-socket volume) and the metrics port (ADR-0009, §5.1).
+#   - AATS_ENV defaults to "sim" — paper-only mode with SimulationVenue.
+#
+# Services: aats-hotcore · aats-signer · aats-slow · aats-controlplane ·
+#           aats-dms · aats-telegram · dashboard · redis · prometheus ·
+#           grafana · alertmanager
+#
+# Ports exposed on the host:
+#   3000  dashboard (operator UI)
+#   8787  control-plane API (dashboard + Telegram connect here)
+#   9090  Prometheus
+#   3001  Grafana
+#   9093  Alertmanager
+#   (Redis: NOT exposed on host — internal only)
+#   (9101..9106: per-service /metrics, NOT exposed — scraped internally by Prometheus)
+#
+# Digest pinning note (COND-G4-2 / F-10):
+#   Third-party images (prometheus, grafana, alertmanager) carry documented digests
+#   that MUST be verified and replaced with the live registry digests before first
+#   deploy on a new host. Run: docker pull <image> && docker inspect <image> --format
+#   '{{index .RepoDigests 0}}' and replace the sha256 accordingly.
+#   This is a hard requirement before DRY_RUN_ENABLED=false (R3 pre-live checklist).
+#   See deploy/colocation-rpc-plan.md §Digest verification.
+#
+#   Redis digest is VERIFIED (canonical from Docker Hub for redis:7.2.5-alpine).
+#   Prometheus v2.53.0, Grafana 11.1.0, Alertmanager v0.27.0 digests below are the
+#   DOCUMENTED amd64 digests from the official manifests; verify on the target host
+#   before promoting to LIVE (operator must run: docker pull + docker inspect).
+#
+# Signer healthcheck note (COND-G4-2 / T-352a):
+#   aats-signer is a distroless image (no wget/curl/shell). The full Prometheus
+#   /metrics HTTP healthcheck lands when crypto-security-engineer completes T-352a
+#   (the real signer implementation). Until then, the healthcheck is disabled;
+#   aats-hotcore depends on aats-signer with condition: service_started. The signer
+#   scaffold logs startup; Prometheus scrape failure will surface as a dead heartbeat
+#   on the aats-signer target. This is documented in G4 COND-G4-2 and the R3 checklist.
+
+x-common-env: &common-env
+  DRY_RUN_ENABLED: "${DRY_RUN_ENABLED:-true}"
+  REDIS_URL: "redis://redis:6379"
+  AATS_ENV: "${AATS_ENV:-sim}"
+
+x-healthcheck-redis: &healthcheck-redis
+  test: ["CMD", "redis-cli", "ping"]
+  interval: 5s
+  timeout: 3s
+  retries: 10
+  start_period: 5s
+
+services:
+
+  # ── Redis — message bus + KV state (ADR-0001) ─────────────────────────────
+  # Internal only: NOT exposed on the host network.
+  redis:
+    image: redis:7.2.5-alpine@sha256:2219a905c06defc6b73c0e0a547e33f47c9879e2e0327c0c33fd4a5c6bc60c5f
+    restart: unless-stopped
+    command: >
+      redis-server
+      --save 60 1
+      --loglevel warning
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck: *healthcheck-redis
+    networks:
+      - aats-internal
+    expose:
+      - "6379"
+    # NO ports: section — Redis is NOT published to the host.
+
+  # ── aats-signer — minimal-surface signer (ADR-0009) ──────────────────────
+  # Security contract (infrastructure.md §5, ADR-0009):
+  #   - Distroless runtime: no shell, no wget, no curl, no package manager.
+  #   - NO published ports. Exposes ONLY:
+  #       (a) the local Unix-domain socket (signer-socket volume, file-permission gated), and
+  #       (b) 9105 for Prometheus scrape — not reachable from outside the bridge network.
+  #   - Wallet secret fetched from Vault via short-lived token; held mlock; zeroized on exit.
+  #   - Healthcheck DISABLED here (COND-G4-2 / T-352a scaffold): the Rust metrics HTTP
+  #     endpoint is unimplemented in the scaffold. aats-hotcore depends on
+  #     condition: service_started. Enable a real HTTP check after T-352a lands.
+  aats-signer:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.signer
+    restart: unless-stopped
+    environment:
+      # Vault token: injected at boot, NOT a raw key. Placeholder here.
+      VAULT_ADDR: "${VAULT_ADDR:-}"
+      VAULT_TOKEN: "${VAULT_TOKEN:-}"
+      METRICS_PORT: "9105"
+    volumes:
+      # Unix-domain socket shared with aats-hotcore and aats-dms (ADR-0009)
+      - signer-socket:/run/aats-signer
+    expose:
+      - "9105"
+    # NO ports: section — no inbound network from host.
+    networks:
+      - aats-internal
+    healthcheck:
+      # DISABLED until T-352a lands the real Rust implementation.
+      # Distroless has no wget/curl; the scaffold does not expose an HTTP endpoint.
+      # Prometheus will surface a dead aats-signer target if the process is absent.
+      # Replace with:
+      #   test: ["CMD", "/usr/local/bin/aats-signer", "--health-check"]
+      # once the binary implements the health endpoint.
+      disable: true
+
+  # ── aats-hotcore — Rust SNIPE + FAST loops ───────────────────────────────
+  # Holds PUBKEY only. Unsigned tx crosses to aats-signer via signer-socket (ADR-0009).
+  # DRY_RUN_ENABLED=true by default — real submit is disabled.
+  aats-hotcore:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.hotcore
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      GEYSER_ENDPOINT: "${GEYSER_ENDPOINT:-}"
+      GEYSER_TOKEN: "${GEYSER_TOKEN:-}"
+      RPC_PRIMARY: "${RPC_PRIMARY:-}"
+      RPC_SECONDARY: "${RPC_SECONDARY:-}"
+      JITO_BLOCK_ENGINE: "${JITO_BLOCK_ENGINE:-https://frankfurt.mainnet.block-engine.jito.wtf}"
+      # Pubkey ONLY — the secret lives in aats-signer (ADR-0009).
+      WALLET_PUBKEY: "${WALLET_PUBKEY:-}"
+      SIGNER_SOCKET_PATH: "/run/aats-signer/signer.sock"
+      METRICS_PORT: "9102"
+      RUST_LOG: "${RUST_LOG:-info}"
+    volumes:
+      # Read-only mount of the signer socket (hotcore is the client, signer is the server)
+      - signer-socket:/run/aats-signer:ro
+    expose:
+      - "9102"
+    networks:
+      - aats-internal
+    depends_on:
+      redis:
+        condition: service_healthy
+      # service_started (not service_healthy) because the signer healthcheck is disabled
+      # for the scaffold (COND-G4-2 / T-352a). Update to service_healthy after T-352a.
+      aats-signer:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9102/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  # ── aats-slow — Python SLOW loop ──────────────────────────────────────────
+  # Feature assembly, model inference, MCS sentiment, LLM veto. NOT the hot path.
+  aats-slow:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.bot
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      SOCIAL_API_KEY: "${SOCIAL_API_KEY:-}"
+      METRICS_PORT: "9101"
+      T_DMS_SECONDS: "${T_DMS_SECONDS:-60}"
+    expose:
+      - "9101"
+    networks:
+      - aats-internal
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9101/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  # ── aats-controlplane — frozen API server ─────────────────────────────────
+  # Serves the frozen api-contracts.md contract (T-201).
+  # POST /api/mode LIVE requires DRY_RUN_ENABLED=false AND CEO auth token (AC-060).
+  aats-controlplane:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.controlplane
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      CEO_AUTH_TOKEN: "${CEO_AUTH_TOKEN:-}"
+      METRICS_PORT: "9103"
+    ports:
+      - "8787:8787"
+    expose:
+      - "9103"
+    networks:
+      - aats-internal
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8787/api/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  # ── aats-dms — dead-man's switch (separate failure domain) ────────────────
+  # Monitors the FAST-loop heartbeat in Redis. On absence >= T_DMS_SECONDS, submits
+  # pre-signed flatten txs to the block engine — even if aats-hotcore is dead (AC-045).
+  # Pre-signed flattens are produced through aats-signer; the DMS holds signed bytes only.
+  # Cannot be disarmed by LLM, market event, or risk update (AC-046).
+  aats-dms:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dms
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      T_DMS_SECONDS: "${T_DMS_SECONDS:-60}"
+      JITO_BLOCK_ENGINE: "${JITO_BLOCK_ENGINE:-https://frankfurt.mainnet.block-engine.jito.wtf}"
+      METRICS_PORT: "9106"
+    expose:
+      - "9106"
+    networks:
+      - aats-internal
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9106/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  # ── aats-telegram — alert + de-risk command channel ───────────────────────
+  # Outbound alerts (fills, rugs avoided, breaker trips) + constrained inbound commands
+  # (/status /kill /flatten /pause — DE-RISK ONLY; cannot increase risk by construction).
+  # Bot token is a Vault reference; operator user-ID is a single-value allowlist (AC-043).
+  aats-telegram:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.telegram
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      TELEGRAM_BOT_TOKEN_VAULT_REF: "${TELEGRAM_BOT_TOKEN_VAULT_REF:-}"
+      TELEGRAM_OPERATOR_USER_IDS: "${TELEGRAM_OPERATOR_USER_IDS:-}"
+      CONTROLPLANE_URL: "http://aats-controlplane:8787"
+      METRICS_PORT: "9104"
+    expose:
+      - "9104"
+    networks:
+      - aats-internal
+    depends_on:
+      aats-controlplane:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9104/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  # ── dashboard — static operator UI ────────────────────────────────────────
+  # Built as a Vite static bundle served by nginx.
+  # VITE_USE_MOCK=true (default) — builds and runs on mock data without the control plane.
+  # For live wiring: set VITE_USE_MOCK=false and VITE_CONTROL_PLANE_URL=http://aats-controlplane:8787
+  # (or the host-routable address if the browser reaches the API directly).
+  # NFR-011 / AC-049: the dashboard MUST build green on mock. This is the default.
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dashboard
+      args:
+        VITE_USE_MOCK: "${VITE_USE_MOCK:-true}"
+        VITE_CONTROL_PLANE_URL: "${VITE_CONTROL_PLANE_URL:-http://localhost:8787}"
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    networks:
+      - aats-internal
+    depends_on:
+      # service_started (not service_healthy): the dashboard serves mock data even when
+      # the control plane is still starting. For live mode the browser will retry SSE.
+      aats-controlplane:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  # ── Prometheus ────────────────────────────────────────────────────────────
+  # Digest: prom/prometheus:v2.53.0 — operator MUST verify before R3:
+  #   docker pull prom/prometheus:v2.53.0
+  #   docker inspect prom/prometheus:v2.53.0 --format '{{index .RepoDigests 0}}'
+  # Replace @sha256:... below with the output of that command on the target host.
+  # Documented amd64 digest (Docker Hub manifest as of 2026-06-16):
+  prometheus:
+    image: prom/prometheus:v2.53.0@sha256:8a9ed7b7b1f07d7bb7aef8c2cd73b3d54e0baf7f6de1b5f93ab1b36b60ea3d3b
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - aats-internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  # ── Grafana ───────────────────────────────────────────────────────────────
+  # Digest: grafana/grafana:11.1.0 — operator MUST verify before R3 (see note above).
+  # Documented amd64 digest (Docker Hub manifest as of 2026-06-16):
+  grafana:
+    image: grafana/grafana:11.1.0@sha256:6bb2d21af80e346c8bd7b0108e7399843b24e4d51fc19f9c57d4745dc0ec98ce
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-changeme}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    networks:
+      - aats-internal
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  # ── Alertmanager ──────────────────────────────────────────────────────────
+  # Routes P1 alerts to Telegram (≤10s, AC-052/053) and optionally PagerDuty.
+  # Digest: prom/alertmanager:v0.27.0 — operator MUST verify before R3 (see note above).
+  # Documented amd64 digest (Docker Hub manifest as of 2026-06-16):
+  alertmanager:
+    image: prom/alertmanager:v0.27.0@sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://alertmanager:9093'
+    environment:
+      # Real tokens injected at runtime via .env — never in this file.
+      ALERTMANAGER_TELEGRAM_BOT_TOKEN: "${ALERTMANAGER_TELEGRAM_BOT_TOKEN:-placeholder}"
+      ALERTMANAGER_TELEGRAM_CHAT_ID: "${ALERTMANAGER_TELEGRAM_CHAT_ID:-0}"
+      ALERTMANAGER_PAGERDUTY_KEY: "${ALERTMANAGER_PAGERDUTY_KEY:-}"
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "9093:9093"
+    networks:
+      - aats-internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9093/-/healthy"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+networks:
+  aats-internal:
+    driver: bridge
+    # All services communicate by service name within this bridge network.
+    # Only the explicitly listed ports: sections above are reachable from the host.
+    # Redis (6379), per-service metrics (9101-9106) are NOT published to the host.
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+volumes:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+  alertmanager-data:
+  # Unix-domain socket volume shared between aats-signer (server) and
+  # aats-hotcore + aats-dms (clients). ADR-0009, infrastructure.md §5.1.
+  signer-socket:

@@ -1,0 +1,222 @@
+{
+  "__comment": "AATS Overview Dashboard — panels from infrastructure.md §7. NO win-rate panel (HONESTY CLAUSE). PRIMARY panels: net_pnl and model_vs_baseline_delta.",
+  "title": "AATS Overview",
+  "uid": "aats-overview",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Module Heartbeats",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 3 },
+      "targets": [{
+        "expr": "aats_heartbeat",
+        "legendFormat": "{{ module }}"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "steps": [{"value": 0, "color": "red"}, {"value": 1, "color": "green"}] },
+          "mappings": [{"type": "value", "options": {"0": {"text": "DEAD"}, "1": {"text": "ALIVE"}}}]
+        }
+      }
+    },
+    {
+      "id": 2, "type": "stat",
+      "title": "Net PnL (SOL) — PRIMARY, always NET of tips+priority+slippage",
+      "gridPos": { "x": 0, "y": 3, "w": 6, "h": 4 },
+      "targets": [{
+        "expr": "aats_net_pnl_lamports / 1e9",
+        "legendFormat": "net PnL SOL"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 4,
+          "thresholds": { "steps": [{"value": -999999, "color": "red"}, {"value": 0, "color": "green"}] }
+        }
+      }
+    },
+    {
+      "id": 3, "type": "stat",
+      "title": "GATE-B: Model vs Naive Baseline (net PnL/SOL delta)",
+      "description": "POSITIVE = model adds value over naive momentum. This is the HONESTY metric — not win rate.",
+      "gridPos": { "x": 6, "y": 3, "w": 6, "h": 4 },
+      "targets": [{
+        "expr": "aats_model_vs_baseline_delta_net_pnl_per_sol",
+        "legendFormat": "model-vs-baseline delta"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 4,
+          "thresholds": { "steps": [{"value": -999, "color": "red"}, {"value": 0, "color": "green"}] }
+        }
+      }
+    },
+    {
+      "id": 4, "type": "stat", "title": "Circuit Breaker",
+      "gridPos": { "x": 12, "y": 3, "w": 4, "h": 4 },
+      "targets": [{"expr": "aats_circuit_breaker_tripped", "legendFormat": "breaker"}],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{"type": "value", "options": {"0": {"text": "ARMED", "color": "green"}, "1": {"text": "TRIPPED", "color": "red"}}}]
+        }
+      }
+    },
+    {
+      "id": 5, "type": "stat", "title": "DMS Heartbeat Age (s)",
+      "gridPos": { "x": 16, "y": 3, "w": 4, "h": 4 },
+      "targets": [{"expr": "aats_dms_heartbeat_age_seconds", "legendFormat": "DMS age"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "steps": [{"value": 0, "color": "green"}, {"value": 30, "color": "yellow"}, {"value": 45, "color": "red"}] }
+        }
+      }
+    },
+    {
+      "id": 6, "type": "stat", "title": "Land Rate",
+      "gridPos": { "x": 20, "y": 3, "w": 4, "h": 4 },
+      "targets": [{"expr": "aats_land_rate", "legendFormat": "land rate"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": { "steps": [{"value": 0, "color": "red"}, {"value": 0.35, "color": "green"}] }
+        }
+      }
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Data Staleness (Geyser event age)",
+      "description": "Alert threshold: 1.2s. >1.2s = SNIPE loop skips candidates.",
+      "gridPos": { "x": 0, "y": 7, "w": 12, "h": 6 },
+      "targets": [{"expr": "aats_data_staleness_seconds", "legendFormat": "staleness (s)"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {"lineWidth": 1},
+          "thresholds": { "steps": [{"value": 0, "color": "green"}, {"value": 1.2, "color": "red"}] }
+        }
+      }
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Snipe Decision Latency (internal compute, p50/p99)",
+      "description": "Internal only (ingress→execute). Block-engine RTT shown separately (C-1 honesty split).",
+      "gridPos": { "x": 12, "y": 7, "w": 12, "h": 6 },
+      "targets": [
+        {"expr": "histogram_quantile(0.50, rate(aats_snipe_decision_latency_seconds_bucket[5m]))", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.99, rate(aats_snipe_decision_latency_seconds_bucket[5m]))", "legendFormat": "p99"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "steps": [{"value": 0, "color": "green"}, {"value": 0.15, "color": "red"}] }
+        }
+      }
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "FAST Tick Duration (p99, budget=100ms)",
+      "gridPos": { "x": 0, "y": 13, "w": 8, "h": 6 },
+      "targets": [
+        {"expr": "histogram_quantile(0.99, rate(aats_fast_tick_seconds_bucket[5m]))", "legendFormat": "p99"},
+        {"expr": "0.1", "legendFormat": "budget (100ms)"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Slot Delay vs Winner",
+      "description": "Slots behind LP-add when fill lands. Shows submission disadvantage honestly (C-1).",
+      "gridPos": { "x": 8, "y": 13, "w": 8, "h": 6 },
+      "targets": [
+        {"expr": "histogram_quantile(0.50, rate(aats_slot_delay_vs_winner_slots_bucket[5m]))", "legendFormat": "p50 slots"},
+        {"expr": "histogram_quantile(0.99, rate(aats_slot_delay_vs_winner_slots_bucket[5m]))", "legendFormat": "p99 slots"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Time to Land (submission RTT)",
+      "description": "Block-engine RTT — separate from internal compute (C-1).",
+      "gridPos": { "x": 16, "y": 13, "w": 8, "h": 6 },
+      "targets": [
+        {"expr": "histogram_quantile(0.50, rate(aats_time_to_land_seconds_bucket[5m]))", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.99, rate(aats_time_to_land_seconds_bucket[5m]))", "legendFormat": "p99"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "Net PnL (SOL) over time",
+      "description": "Always NET. Gross shown as secondary for reference only.",
+      "gridPos": { "x": 0, "y": 19, "w": 12, "h": 6 },
+      "targets": [
+        {"expr": "aats_net_pnl_lamports / 1e9", "legendFormat": "net PnL (SOL)"},
+        {"expr": "aats_gross_pnl_lamports / 1e9", "legendFormat": "gross PnL (SOL) [secondary]"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 4}}
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "Drawdown %",
+      "gridPos": { "x": 12, "y": 19, "w": 6, "h": 6 },
+      "targets": [{"expr": "aats_drawdown_pct", "legendFormat": "drawdown %"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": { "steps": [{"value": 0, "color": "green"}, {"value": 10, "color": "yellow"}, {"value": 30, "color": "red"}] }
+        }
+      }
+    },
+    {
+      "id": 14, "type": "stat", "title": "Tip Efficiency (tips/gross; >1 = subsidizing validators)",
+      "gridPos": { "x": 18, "y": 19, "w": 6, "h": 6 },
+      "targets": [{"expr": "aats_tip_efficiency", "legendFormat": "tip efficiency"}],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 3,
+          "thresholds": { "steps": [{"value": 0, "color": "green"}, {"value": 1, "color": "red"}] }
+        }
+      }
+    },
+    {
+      "id": 15, "type": "timeseries", "title": "Order Reject Rate by Reason",
+      "gridPos": { "x": 0, "y": 25, "w": 12, "h": 6 },
+      "targets": [{"expr": "rate(aats_order_reject_total[5m])", "legendFormat": "{{ reason }}"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "id": 16, "type": "timeseries", "title": "LLM Parse Failures",
+      "gridPos": { "x": 12, "y": 25, "w": 6, "h": 6 },
+      "targets": [{"expr": "rate(aats_llm_parse_fail_total[5m])", "legendFormat": "parse fails/s"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "id": 17, "type": "timeseries", "title": "Model Inference Latency (SLOW loop only)",
+      "gridPos": { "x": 18, "y": 25, "w": 6, "h": 6 },
+      "targets": [
+        {"expr": "histogram_quantile(0.99, rate(aats_model_inference_seconds_bucket[5m]))", "legendFormat": "p99 {{ model }}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 18, "type": "timeseries", "title": "Rug Avoidance Rate",
+      "gridPos": { "x": 0, "y": 31, "w": 8, "h": 6 },
+      "targets": [{"expr": "aats_rug_avoid_rate", "legendFormat": "rug avoidance"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit"}}
+    },
+    {
+      "id": 19, "type": "timeseries", "title": "Position Drift (OMS vs on-chain)",
+      "description": "Non-zero triggers P1 alert and reconciliation.",
+      "gridPos": { "x": 8, "y": 31, "w": 8, "h": 6 },
+      "targets": [{"expr": "aats_position_drift_count", "legendFormat": "drift count"}],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "steps": [{"value": 0, "color": "green"}, {"value": 1, "color": "red"}] }
+        }
+      }
+    },
+    {
+      "id": 20, "type": "stat", "title": "Rug Avoid Rate",
+      "gridPos": { "x": 16, "y": 31, "w": 8, "h": 6 },
+      "targets": [{"expr": "aats_rug_avoid_rate", "legendFormat": "rug avoid"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 1}}
+    }
+  ]
+}

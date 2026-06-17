@@ -3,6 +3,8 @@ import {
   Activity,
   AlertTriangle,
   Brain,
+  CalendarClock,
+  CheckCircle2,
   Clock,
   Coins,
   Copy,
@@ -11,14 +13,18 @@ import {
   Globe,
   KeyRound,
   Layers,
+  ListChecks,
   Percent,
   Radio,
   RotateCcw,
   Save,
   Server,
   ShieldAlert,
+  ShieldCheck,
   ShieldHalf,
   Sliders,
+  TimerReset,
+  TrendingUp,
   Wallet,
   Wifi,
 } from "lucide-react";
@@ -27,9 +33,16 @@ import {
   resetBreaker,
   setMode,
   useAgentState,
+  useAutoStratPresets,
+  useRestingOrders,
   useRiskConfig,
 } from "@/lib/api";
-import type { AgentMode, RiskConfig } from "@/lib/types";
+import type {
+  AgentMode,
+  AutoStratPreset,
+  RestingOrder,
+  RiskConfig,
+} from "@/lib/types";
 import { Chip, KillSwitch, LiveDot, ModeBadge, Panel } from "@/components/kit";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
@@ -45,7 +58,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import Layout from "@/components/Layout";
 
 /* -------------------------------------------------------------------------- */
 /*  Display helpers — every number rounded for display                        */
@@ -63,7 +75,10 @@ function SkeletonRows({ rows }: { rows: number }) {
   return (
     <div className="space-y-2" aria-hidden>
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="h-7 w-full animate-pulse rounded-md bg-panel2" />
+        <div
+          key={i}
+          className="h-7 w-full animate-pulse rounded-md bg-panel2"
+        />
       ))}
     </div>
   );
@@ -102,7 +117,7 @@ const RISK_FIELDS: RiskField[] = [
     min: 0.5,
     max: 25,
     step: 0.5,
-    display: (v) => `${fmt1(v)} SOL`,
+    display: v => `${fmt1(v)} SOL`,
     hint: "Hard ceiling on per-snipe notional.",
   },
   {
@@ -112,7 +127,7 @@ const RISK_FIELDS: RiskField[] = [
     min: 1,
     max: 50,
     step: 1,
-    display: (v) => `${fmtInt(v)}%`,
+    display: v => `${fmtInt(v)}%`,
     hint: "Sizing relative to deployable capital.",
   },
   {
@@ -122,7 +137,7 @@ const RISK_FIELDS: RiskField[] = [
     min: 5,
     max: 50,
     step: 1,
-    display: (v) => `-${fmtInt(v)}%`,
+    display: v => `-${fmtInt(v)}%`,
     hint: "Hard stop below entry.",
   },
   {
@@ -132,7 +147,7 @@ const RISK_FIELDS: RiskField[] = [
     min: 10,
     max: 300,
     step: 5,
-    display: (v) => `+${fmtInt(v)}%`,
+    display: v => `+${fmtInt(v)}%`,
     hint: "First-leg target before trailing.",
   },
   {
@@ -142,7 +157,7 @@ const RISK_FIELDS: RiskField[] = [
     min: 25,
     max: 1000,
     step: 25,
-    display: (v) => `${fmtInt(v)} bps`,
+    display: v => `${fmtInt(v)} bps`,
     hint: "Reject fills worse than this.",
   },
   {
@@ -152,7 +167,7 @@ const RISK_FIELDS: RiskField[] = [
     min: 1,
     max: 50,
     step: 1,
-    display: (v) => `${fmtInt(v)} SOL`,
+    display: v => `${fmtInt(v)} SOL`,
     hint: "Breaker trips when breached.",
   },
   {
@@ -162,7 +177,7 @@ const RISK_FIELDS: RiskField[] = [
     min: 5,
     max: 720,
     step: 5,
-    display: (v) => `${fmtInt(v)} min`,
+    display: v => `${fmtInt(v)} min`,
     hint: "Force-exit stale positions.",
   },
   {
@@ -172,7 +187,7 @@ const RISK_FIELDS: RiskField[] = [
     min: 0.3,
     max: 0.95,
     step: 0.01,
-    display: (v) => fmt2(v),
+    display: v => fmt2(v),
     hint: "Classifier p at or above this fires.",
   },
   {
@@ -182,7 +197,7 @@ const RISK_FIELDS: RiskField[] = [
     min: 0.05,
     max: 0.6,
     step: 0.01,
-    display: (v) => fmt2(v),
+    display: v => fmt2(v),
     hint: "Classifier p below this is vetoed.",
   },
   {
@@ -192,7 +207,7 @@ const RISK_FIELDS: RiskField[] = [
     min: 0.001,
     max: 0.25,
     step: 0.001,
-    display: (v) => `${fmt2(v)} SOL`,
+    display: v => `${fmt2(v)} SOL`,
     hint: "Per-bundle priority-tip ceiling.",
   },
 ];
@@ -246,19 +261,22 @@ function RiskConfigPanel() {
   const [draft, setDraft] = useState<RiskConfig | null>(null);
 
   // Hydrate the editable draft once config arrives (and on external changes).
+  // Intentional: we sync local editable state from an async-loaded value, the
+  // documented legitimate use of an effect (external system → React state).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (config) setDraft(config);
   }, [config]);
 
   const dirty = useMemo(() => {
     if (!config || !draft) return false;
     return (Object.keys(config) as (keyof RiskConfig)[]).some(
-      (k) => config[k] !== draft[k],
+      k => config[k] !== draft[k]
     );
   }, [config, draft]);
 
   function setField(key: keyof RiskConfig, v: number) {
-    setDraft((d) => (d ? { ...d, [key]: v } : d));
+    setDraft(d => (d ? { ...d, [key]: v } : d));
   }
 
   async function onSave() {
@@ -287,11 +305,7 @@ function RiskConfigPanel() {
       title="Risk parameters"
       icon={<ShieldAlert />}
       actions={
-        dirty ? (
-          <Chip tone="warn">unsaved</Chip>
-        ) : (
-          <Chip tone="ok">synced</Chip>
-        )
+        dirty ? <Chip tone="warn">unsaved</Chip> : <Chip tone="ok">synced</Chip>
       }
     >
       {loading && !draft ? (
@@ -301,12 +315,12 @@ function RiskConfigPanel() {
       ) : (
         <div className="space-y-5">
           <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
-            {RISK_FIELDS.map((f) => (
+            {RISK_FIELDS.map(f => (
               <RiskSlider
                 key={f.key}
                 field={f}
                 value={draft[f.key]}
-                onChange={(v) => setField(f.key, v)}
+                onChange={v => setField(f.key, v)}
                 disabled={saving}
               />
             ))}
@@ -389,13 +403,13 @@ const VENUE_FIELDS: VenueField[] = [
 
 function VenuePanel() {
   const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(VENUE_FIELDS.map((f) => [f.key, f.initial])),
+    Object.fromEntries(VENUE_FIELDS.map(f => [f.key, f.initial]))
   );
   const [savedSnapshot] = useState(values);
 
   const dirty = useMemo(
-    () => VENUE_FIELDS.some((f) => values[f.key] !== savedSnapshot[f.key]),
-    [values, savedSnapshot],
+    () => VENUE_FIELDS.some(f => values[f.key] !== savedSnapshot[f.key]),
+    [values, savedSnapshot]
   );
 
   return (
@@ -418,7 +432,7 @@ function VenuePanel() {
       }
     >
       <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
-        {VENUE_FIELDS.map((f) => {
+        {VENUE_FIELDS.map(f => {
           const Icon = f.icon;
           return (
             <div key={f.key} className="space-y-1.5">
@@ -435,8 +449,8 @@ function VenuePanel() {
                 placeholder={f.placeholder}
                 spellCheck={false}
                 autoComplete="off"
-                onChange={(e) =>
-                  setValues((v) => ({ ...v, [f.key]: e.target.value }))
+                onChange={e =>
+                  setValues(v => ({ ...v, [f.key]: e.target.value }))
                 }
                 className="num h-8 rounded-md border-border bg-panel2 text-[12px] text-text placeholder:text-faint"
               />
@@ -488,19 +502,19 @@ const STRATEGY_TOGGLES: StrategyToggle[] = [
 
 function StrategyPanel() {
   const [toggles, setToggles] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(STRATEGY_TOGGLES.map((t) => [t.key, t.initial])),
+    Object.fromEntries(STRATEGY_TOGGLES.map(t => [t.key, t.initial]))
   );
 
   function flip(key: string, on: boolean) {
-    setToggles((t) => ({ ...t, [key]: on }));
-    const meta = STRATEGY_TOGGLES.find((s) => s.key === key);
+    setToggles(t => ({ ...t, [key]: on }));
+    const meta = STRATEGY_TOGGLES.find(s => s.key === key);
     toast.message(`${meta?.label ?? key} ${on ? "enabled" : "disabled"}`);
   }
 
   return (
     <Panel title="Strategy" icon={<Layers />}>
       <ul className="divide-y divide-border">
-        {STRATEGY_TOGGLES.map((t) => (
+        {STRATEGY_TOGGLES.map(t => (
           <li
             key={t.key}
             className="flex items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0"
@@ -519,7 +533,7 @@ function StrategyPanel() {
             <Switch
               id={`strat-${t.key}`}
               checked={toggles[t.key]}
-              onCheckedChange={(on) => flip(t.key, on)}
+              onCheckedChange={on => flip(t.key, on)}
               className="shrink-0 data-[state=checked]:bg-brand"
               aria-label={t.label}
             />
@@ -604,7 +618,7 @@ function ModePanel() {
       ) : (
         <div className="space-y-3">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            {MODE_ORDER.map((m) => {
+            {MODE_ORDER.map(m => {
               const meta = MODE_META[m];
               const Icon = meta.icon;
               const active = current === m;
@@ -650,15 +664,15 @@ function ModePanel() {
           </div>
           <p className="flex items-center gap-1.5 text-[11px] text-faint">
             <AlertTriangle className="h-3 w-3 text-warn" />
-            Switching to <span className="text-warn">live</span> requires explicit
-            confirmation and immediately arms real capital.
+            Switching to <span className="text-warn">live</span> requires
+            explicit confirmation and immediately arms real capital.
           </p>
         </div>
       )}
 
       <AlertDialog
         open={pending === "live"}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           if (!open) setPending(null);
         }}
       >
@@ -670,12 +684,14 @@ function ModePanel() {
             </AlertDialogTitle>
             <AlertDialogDescription className="text-muted-foreground">
               The agent will broadcast real transactions to Jito and commit real
-              capital under the configured risk limits. Confirm only if you intend
-              to trade live.
+              capital under the configured risk limits. Confirm only if you
+              intend to trade live.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Stay in {current ?? "current"}</AlertDialogCancel>
+            <AlertDialogCancel>
+              Stay in {current ?? "current"}
+            </AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 setPending(null);
@@ -829,49 +845,318 @@ function DangerPanel() {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Auto-strat presets — TP-ladder + trailing + exit mode (de-risk only)      */
+/* -------------------------------------------------------------------------- */
+
+function PresetLadder({ rungs }: { rungs: number[] }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {rungs.map((r, i) => (
+        <span
+          key={i}
+          className="num rounded border border-[color:color-mix(in_srgb,var(--up)_24%,transparent)] bg-[color:color-mix(in_srgb,var(--up)_8%,transparent)] px-1.5 py-0.5 text-[10px] font-medium text-up"
+        >
+          +{fmtInt(r)}%
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function PresetCard({
+  preset,
+  active,
+  onApply,
+}: {
+  preset: AutoStratPreset;
+  active: boolean;
+  onApply: () => void;
+}) {
+  return (
+    <div
+      className={[
+        "flex flex-col gap-3 rounded-[10px] border p-3.5 transition-colors",
+        active
+          ? "border-[color:color-mix(in_srgb,var(--accent)_45%,transparent)] bg-[color:color-mix(in_srgb,var(--accent)_10%,transparent)]"
+          : "border-border bg-panel2",
+      ].join(" ")}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-[13px] font-semibold text-text">
+            <TrendingUp className="h-3.5 w-3.5 text-brand" />
+            {preset.name}
+          </div>
+          <p className="mt-1 text-[11px] leading-snug text-faint">
+            {preset.description}
+          </p>
+        </div>
+        {active && (
+          <Chip tone="accent" icon={<CheckCircle2 />}>
+            active
+          </Chip>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
+        <div className="col-span-2">
+          <div className="text-faint">TP ladder</div>
+          <div className="mt-1">
+            <PresetLadder rungs={preset.tpLadderPct} />
+          </div>
+        </div>
+        <div>
+          <div className="text-faint">Trailing</div>
+          <div className="num mt-0.5 font-semibold text-text">
+            {fmtInt(preset.trailingPct)}% give-back
+          </div>
+        </div>
+        <div>
+          <div className="text-faint">Hard stop</div>
+          <div className="num mt-0.5 font-semibold text-down">
+            {fmtInt(preset.hardStopPct)}%
+          </div>
+        </div>
+        <div>
+          <div className="text-faint">Exit mode</div>
+          <div className="mt-0.5">
+            {preset.exitMode === "secure" ? (
+              <Chip tone="info" icon={<ShieldCheck />}>
+                secure
+              </Chip>
+            ) : (
+              <Chip tone="warn">fast</Chip>
+            )}
+          </div>
+        </div>
+        <div>
+          <div className="text-faint">Max hold</div>
+          <div className="num mt-0.5 font-semibold text-text">
+            {fmtInt(preset.maxHoldMin)} min
+          </div>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={onApply}
+        disabled={active}
+        aria-label={`Apply ${preset.name} preset`}
+        aria-pressed={active}
+        className="mt-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-border bg-panel px-2.5 py-1.5 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-hover hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-default disabled:opacity-60"
+      >
+        {active ? "Applied" : "Apply preset"}
+      </button>
+    </div>
+  );
+}
+
+function AutoStratPanel() {
+  const { data: presets, loading, error } = useAutoStratPresets();
+  // Default-active preset is the Secure ladder (OQ-008 secure default). Applying
+  // a preset only changes EXIT configuration for NEW positions; it never sizes
+  // entries and never retro-modifies an open position (AC-033).
+  const [activeId, setActiveId] = useState<string>("secure-ladder");
+
+  function apply(p: AutoStratPreset) {
+    setActiveId(p.id);
+    toast.success(`Auto-strat preset “${p.name}” applied`, {
+      description:
+        "Exit ladder, trailing and mode set for new positions. Open positions keep their entry-time config.",
+    });
+  }
+
+  return (
+    <Panel
+      title="Auto-strat presets"
+      icon={<ListChecks />}
+      actions={<Chip tone="neutral">de-risk only · exits</Chip>}
+    >
+      {loading && !presets ? (
+        <SkeletonRows rows={3} />
+      ) : error || !presets ? (
+        <ErrorNote message={error ?? "No presets available"} />
+      ) : (
+        <div className="space-y-3">
+          <p className="text-[11px] leading-snug text-faint">
+            A preset configures the take-profit ladder, trailing-stop give-back,
+            hard stop and exit mode for <span className="text-text">new</span>{" "}
+            positions. Presets only shape exits — they never size or widen an
+            entry, and trailing tightens, never widens.
+          </p>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {presets.map((p) => (
+              <PresetCard
+                key={p.id}
+                preset={p}
+                active={p.id === activeId}
+                onApply={() => apply(p)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Resting orders — limit / DCA / stop that fire when the operator is OFFLINE */
+/* -------------------------------------------------------------------------- */
+
+const RESTING_KIND_META: Record<
+  RestingOrder["kind"],
+  { label: string; tone: "info" | "violet" | "danger"; Icon: typeof CalendarClock }
+> = {
+  limit_exit: { label: "Limit exit", tone: "info", Icon: TrendingUp },
+  dca_exit: { label: "DCA exit", tone: "violet", Icon: CalendarClock },
+  stop_exit: { label: "Stop exit", tone: "danger", Icon: ShieldAlert },
+};
+
+function RestingStatusChip({ status }: { status: RestingOrder["status"] }) {
+  if (status === "armed")
+    return (
+      <Chip tone="ok" icon={<TimerReset />}>
+        armed
+      </Chip>
+    );
+  if (status === "triggered") return <Chip tone="info">triggered</Chip>;
+  return <Chip tone="neutral">cancelled</Chip>;
+}
+
+function RestingOrdersPanel() {
+  const { data: orders, loading, error } = useRestingOrders();
+
+  const armed = (orders ?? []).filter((o) => o.status === "armed").length;
+
+  return (
+    <Panel
+      title="Resting orders"
+      icon={<CalendarClock />}
+      actions={
+        <span className="num text-[11px] text-faint">{armed} armed</span>
+      }
+    >
+      {loading && !orders ? (
+        <SkeletonRows rows={3} />
+      ) : error ? (
+        <ErrorNote message={error} />
+      ) : !orders || orders.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+          <CalendarClock className="h-5 w-5 text-faint" />
+          <span className="text-[12px] text-muted-foreground">
+            No resting orders. Limit / DCA / stop exits appear here once set.
+          </span>
+        </div>
+      ) : (
+        <div className="space-y-2.5">
+          <p className="text-[11px] leading-snug text-faint">
+            Limit, DCA and stop exits that fire even when the operator and the
+            bot process are <span className="text-text">offline</span> (backed by
+            the dead-man's switch). All are{" "}
+            <span className="text-text">de-risk direction only</span> — they exit
+            or reduce, never add or widen.
+          </p>
+          <ul className="divide-y divide-border">
+            {orders.map((o) => {
+              const meta = RESTING_KIND_META[o.kind];
+              const Icon = meta.Icon;
+              return (
+                <li
+                  key={o.id}
+                  className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0"
+                >
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-panel2 text-muted-foreground">
+                      <Icon className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="min-w-0 leading-tight">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[12px] font-semibold text-text">
+                          {o.token}
+                        </span>
+                        <Chip tone={meta.tone}>{meta.label}</Chip>
+                      </div>
+                      <div className="num mt-0.5 text-[10px] text-faint">
+                        trigger{" "}
+                        <span className="text-muted-foreground">
+                          {o.triggerPct >= 0 ? "+" : ""}
+                          {fmtInt(o.triggerPct)}%
+                        </span>{" "}
+                        · exits {fmtInt(o.fractionBps / 100)}% of remaining
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {o.offlineCapable && (
+                      <span
+                        className="hidden items-center gap-1 text-[10px] text-faint sm:flex"
+                        title="Fires with no operator or bot process online"
+                      >
+                        <ShieldCheck className="h-3 w-3 text-up" />
+                        offline-safe
+                      </span>
+                    )}
+                    <RestingStatusChip status={o.status} />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Page                                                                      */
 /* -------------------------------------------------------------------------- */
 
 export default function Settings() {
   return (
-    <Layout>
-      <div className="space-y-4">
-        {/* Page header */}
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-[15px] font-semibold tracking-tight text-text">
-              Settings
-            </h1>
-            <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Sliders className="h-3.5 w-3.5 text-faint" />
-              Risk, venue, strategy & custody
-            </span>
-          </div>
-          <span className="num hidden text-[11px] text-faint sm:block">
-            operator control plane
+    <div className="space-y-4">
+      {/* Page header */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <h1 className="text-[15px] font-semibold tracking-tight text-text">
+            Settings
+          </h1>
+          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <Sliders className="h-3.5 w-3.5 text-faint" />
+            Risk, venue, strategy & custody
           </span>
         </div>
-
-        {/* Risk parameters — full width */}
-        <RiskConfigPanel />
-
-        {/* Mode + wallet */}
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-          <div className="xl:col-span-2">
-            <ModePanel />
-          </div>
-          <WalletPanel />
-        </div>
-
-        {/* Venue + strategy */}
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <VenuePanel />
-          <StrategyPanel />
-        </div>
-
-        {/* Lifecycle actions */}
-        <DangerPanel />
+        <span className="num hidden text-[11px] text-faint sm:block">
+          operator control plane
+        </span>
       </div>
-    </Layout>
+
+      {/* Risk parameters — full width */}
+      <RiskConfigPanel />
+
+      {/* Mode + wallet */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div className="xl:col-span-2">
+          <ModePanel />
+        </div>
+        <WalletPanel />
+      </div>
+
+      {/* Auto-strat presets — full width (exit configuration) */}
+      <AutoStratPanel />
+
+      {/* Venue + strategy */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <VenuePanel />
+        <StrategyPanel />
+      </div>
+
+      {/* Resting orders */}
+      <RestingOrdersPanel />
+
+      {/* Lifecycle actions */}
+      <DangerPanel />
+    </div>
   );
 }

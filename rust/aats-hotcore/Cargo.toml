@@ -1,0 +1,67 @@
+[package]
+name = "aats-hotcore"
+version = "0.1.0"
+edition = "2021"
+description = "AATS hot core — Geyser ingest + SNIPE + FAST loops (Rust)"
+
+# ARCHITECTURE BOUNDARY (ADR-0002, BLUEPRINT §4.1):
+#   This crate owns the SNIPE + FAST loops and is the ONLY code on the
+#   block-0 path.  Python NEVER calls into this crate directly.
+#   Communication: Redis Streams (events in, KV reads) and local Unix-domain
+#   socket to aats-signer for tx signing.
+#
+# KEY INVARIANTS enforced at compile time:
+#   - LLM is unreachable: no tokio-openai / async HTTP client to LLM APIs.
+#   - aats-signer is the ONLY holder of the wallet secret; this crate holds
+#     the pubkey only (ADR-0009, infrastructure.md §5.1).
+#   - DRY_RUN_ENABLED=true (default) makes submit_transaction unreachable.
+
+[[bin]]
+name = "aats-hotcore"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Redis (message bus + KV state)
+redis = { version = "0.25", features = ["tokio-comp"] }
+
+# Prometheus metrics
+prometheus = "0.13"
+hyper = { version = "1", features = ["http1", "server"] }
+http-body-util = "0.1"
+hyper-util = { version = "0.1", features = ["tokio"] }
+
+# Solana primitives (unsigned tx build; NO signing here — ADR-0009)
+solana-sdk = "1.18"
+solana-client = "1.18"
+
+# gRPC for Geyser/Yellowstone
+tonic = "0.11"
+prost = "0.12"
+
+# ONNX inference shim (snipe classifier; ≤5ms budget)
+ort = { version = "1.19", features = ["load-dynamic"] }
+
+# Logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json"] }
+
+# Config
+config = "0.14"
+
+# Unix socket IPC to aats-signer
+tokio-util = { version = "0.7", features = ["codec"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

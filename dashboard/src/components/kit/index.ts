@@ -23,3 +23,7 @@ export type { ModeBadgeProps } from "./ModeBadge";
 
 export { Gauge } from "./Gauge";
 export type { GaugeProps, GaugeTone } from "./Gauge";
+
+export { RedFlags } from "./RedFlags";
+export type { RedFlagsProps } from "./RedFlags";
+export { redFlagLabel } from "@/lib/red-flags";

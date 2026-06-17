@@ -1,0 +1,37 @@
+{
+  "_comment": [
+    "FROZEN naive-momentum baseline config (C-4, T-311). DO NOT EDIT after the first model fit.",
+    "This is the GATE-B control: the snipe model must beat THIS, net of cost, on recorded data",
+    "(EDGE-VERDICT.md GATE-B / \u00c2\u00a75 K-1). The params below are CHANGE-CONTROLLED: a test FAILS",
+    "(baseline_changed_after_fit) if the canonical hash of `params` changes after first fit.",
+    "The hash is stored in `frozen_hash` and is recomputed deterministically from `params` alone.",
+    "",
+    "The baseline rule (data-models.md \u00c2\u00a73.2): 'enter every candidate with positive first-K-slot",
+    "net buy pressure above a fixed percentile.' It is constructible from first_k_buy_pressure +",
+    "first_k_volume_lamports ONLY (no future data, point-in-time). It carries NO selection",
+    "intelligence beyond this fixed rule (walk-forward \u00c2\u00a74). It emits a SELECTION SIGNAL + a momentum",
+    "score and a baseline probability proxy \u00e2\u20ac\u201d NEVER a price, NEVER a trade decision, NEVER a size."
+  ],
+  "schema_version": "1.0.0",
+  "params": {
+    "first_k_slots": 10,
+    "selection_percentile": 60.0,
+    "unit_of_risk": "net_pnl_per_sol_at_risk",
+    "candidate_universe": "all_pumpfun_pumpswap_launches_with_completed_first_k_snapshot",
+    "feature_schema_version": "1.0.0",
+    "min_volume_lamports": 0,
+    "reference_threshold_lamports": "300000000"
+  },
+  "params_provenance": {
+    "first_k_slots": "K \u00e2\u20ac\u201d width of the point-in-time buy-pressure window in slots (matches FeatureFrame.first_k_slots).",
+    "selection_percentile": "Fixed percentile of the FROZEN reference net-buy-pressure distribution; a candidate is selected iff its net buy pressure >= the reference threshold at this percentile. Frozen so it is NOT chosen post-hoc (red-team 2A p-hacking guard).",
+    "unit_of_risk": "GATE-B unit \u00e2\u20ac\u201d net PnL per SOL at risk. The model's net-PnL-per-unit-risk must beat the baseline's on the SAME windows/cost-stack (EDGE-VERDICT GATE-B).",
+    "candidate_universe": "The frozen candidate set the baseline ranks over; identical to the universe the model sees (only selection intelligence is denied the baseline).",
+    "feature_schema_version": "Hashed in (data-models.md \u00c2\u00a73 note): if the feature set changes after freeze, this version bumps and the immutability test FAILS.",
+    "min_volume_lamports": "Minimum first-K traded volume (lamports, integer) for a candidate to be eligible; 0 = no volume floor. Money is integer lamports, never float.",
+    "reference_threshold_lamports": "The FROZEN net-buy-pressure threshold (lamports, Decimal-as-string) that the `selection_percentile` resolves to on the reference cohort. Stored explicitly so the rule is reproducible without re-reading any data. Decimal-as-string, never float."
+  },
+  "frozen_at_first_fit": true,
+  "first_fit_recorded_at_ms": 1781913600000,
+  "frozen_hash": "e1e7dc6cd34fea837b90c2d04fa46275dbb55d3f9f527a0b2acf5310a3304a5e"
+}

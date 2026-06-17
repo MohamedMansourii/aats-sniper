@@ -30,8 +30,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import Layout from "@/components/Layout";
-import { Chip, LiveDot, Panel, StatTile, type ChipTone } from "@/components/kit";
+import {
+  Chip,
+  LiveDot,
+  Panel,
+  StatTile,
+  type ChipTone,
+} from "@/components/kit";
 import {
   useAgentState,
   useInfraTiers,
@@ -39,26 +44,7 @@ import {
   useModuleHealth,
 } from "@/lib/api";
 import type { ModuleHealth } from "@/lib/types";
-
-/* -------------------------------------------------------------------------- */
-/*  Palette — recharts renders to canvas/SVG and cannot read CSS vars, so the */
-/*  dark theme hexes are hardcoded here, consistent with src/index.css.        */
-/* -------------------------------------------------------------------------- */
-
-const C = {
-  panel2: "#171b21",
-  border: "#1e242c",
-  text: "#e8edf4",
-  muted: "#9aa4b2",
-  faint: "#646e7e",
-  accent: "#22e39a",
-  up: "#22e39a",
-  down: "#ff5d5d",
-  danger: "#ff5d5d",
-  warn: "#ffb020",
-  info: "#4aa3ff",
-  violet: "#8b7bff",
-} as const;
+import { CHART as C } from "@/lib/chart-colors";
 
 const roundInt = (n: number) => Math.round(n);
 
@@ -149,7 +135,10 @@ function SkeletonRows({ rows }: { rows: number }) {
   return (
     <div className="space-y-2 p-3.5" aria-hidden>
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="h-9 w-full animate-pulse rounded-md bg-panel2" />
+        <div
+          key={i}
+          className="h-9 w-full animate-pulse rounded-md bg-panel2"
+        />
       ))}
     </div>
   );
@@ -203,9 +192,13 @@ function ModuleCard({ m }: { m: ModuleHealth }) {
             <div className="text-[10px] uppercase tracking-wide text-faint">
               latency
             </div>
-            <div className={`num text-[12px] font-semibold ${latencyClass(m.latencyMs, m.status)}`}>
+            <div
+              className={`num text-[12px] font-semibold ${latencyClass(m.latencyMs, m.status)}`}
+            >
               {roundInt(m.latencyMs)}
-              <span className="ml-0.5 text-[10px] font-normal text-faint">ms</span>
+              <span className="ml-0.5 text-[10px] font-normal text-faint">
+                ms
+              </span>
             </div>
           </div>
           <div className="h-7 w-px bg-border" aria-hidden />
@@ -223,7 +216,9 @@ function ModuleCard({ m }: { m: ModuleHealth }) {
               }`}
             >
               {roundInt(m.staleMs)}
-              <span className="ml-0.5 text-[10px] font-normal text-faint">ms</span>
+              <span className="ml-0.5 text-[10px] font-normal text-faint">
+                ms
+              </span>
             </div>
           </div>
         </div>
@@ -259,7 +254,7 @@ function ModuleGrid({
 
   return (
     <div className="grid grid-cols-1 gap-2.5 p-3.5 sm:grid-cols-2 xl:grid-cols-3">
-      {health.map((m) => (
+      {health.map(m => (
         <ModuleCard key={m.name} m={m} />
       ))}
     </div>
@@ -288,7 +283,9 @@ function ConnectionRow({
           {icon}
         </span>
         <div className="min-w-0 leading-tight">
-          <div className="truncate text-[12px] font-medium text-text">{name}</div>
+          <div className="truncate text-[12px] font-medium text-text">
+            {name}
+          </div>
           <div className="num text-[11px] text-faint">{detail}</div>
         </div>
       </div>
@@ -348,7 +345,11 @@ function LandRateByRpc({
             margin={{ top: 2, right: 40, bottom: 2, left: 6 }}
             barCategoryGap={10}
           >
-            <CartesianGrid stroke={C.border} strokeDasharray="2 4" horizontal={false} />
+            <CartesianGrid
+              stroke={C.border}
+              strokeDasharray="2 4"
+              horizontal={false}
+            />
             <XAxis type="number" domain={[0, 100]} hide />
             <YAxis
               type="category"
@@ -358,8 +359,13 @@ function LandRateByRpc({
               axisLine={false}
               tick={{ fill: C.muted, fontSize: 11 }}
             />
-            <Bar dataKey="landRate" radius={[2, 2, 2, 2]} isAnimationActive={false} maxBarSize={20}>
-              {rows.map((r) => (
+            <Bar
+              dataKey="landRate"
+              radius={[2, 2, 2, 2]}
+              isAnimationActive={false}
+              maxBarSize={20}
+            >
+              {rows.map(r => (
                 <Cell key={r.rpc} fill={r.fill} />
               ))}
               <LabelList
@@ -412,7 +418,7 @@ function AlertFeed({
 
   return (
     <ul className="divide-y divide-border">
-      {alerts.map((a) => {
+      {alerts.map(a => {
         const meta = SEV_META[a.severity];
         return (
           <li
@@ -437,7 +443,9 @@ function AlertFeed({
                   {a.source}
                 </span>
               </div>
-              <p className="mt-1 text-[12px] leading-snug text-text">{a.message}</p>
+              <p className="mt-1 text-[12px] leading-snug text-text">
+                {a.message}
+              </p>
             </div>
             <span className="num shrink-0 text-[10px] text-faint">
               {ago(a.ts, now)} ago
@@ -479,13 +487,15 @@ export default function Monitoring() {
 
   /* --- ops rollups --- */
   const total = health?.length ?? 0;
-  const online = health?.filter((m) => m.status === "online").length ?? 0;
-  const degraded = health?.filter((m) => m.status === "degraded").length ?? 0;
-  const offline = health?.filter((m) => m.status === "offline").length ?? 0;
+  const online = health?.filter(m => m.status === "online").length ?? 0;
+  const degraded = health?.filter(m => m.status === "degraded").length ?? 0;
+  const offline = health?.filter(m => m.status === "offline").length ?? 0;
 
   const systemHealthy = total > 0 && offline === 0 && degraded === 0;
-  const systemTone: ChipTone = offline > 0 ? "danger" : degraded > 0 ? "warn" : "ok";
-  const systemLabel = offline > 0 ? "Critical" : degraded > 0 ? "Degraded" : "Nominal";
+  const systemTone: ChipTone =
+    offline > 0 ? "danger" : degraded > 0 ? "warn" : "ok";
+  const systemLabel =
+    offline > 0 ? "Critical" : degraded > 0 ? "Degraded" : "Nominal";
 
   const geyser = state?.connection.geyser ?? false;
   const shred = state?.connection.shredstream ?? false;
@@ -514,19 +524,36 @@ export default function Monitoring() {
   /* --- land rate by RPC (derived from infra tiers + measured land rate) --- */
   const landByRpc = useMemo<RpcLand[]>(() => {
     if (!tiers || tiers.length === 0) return [];
-    const colo = tiers.find((t) => t.name === "colo");
-    const generic = tiers.find((t) => t.name === "generic");
+    const colo = tiers.find(t => t.name === "colo");
+    const generic = tiers.find(t => t.name === "generic");
     const rows: RpcLand[] = [];
     if (colo) {
       const v = roundInt(colo.landRate);
-      rows.push({ rpc: "Jito (colo)", landRate: v, label: `${v}%`, fill: landFill(v) });
+      rows.push({
+        rpc: "Jito (colo)",
+        landRate: v,
+        label: `${v}%`,
+        fill: landFill(v),
+      });
     }
     if (generic) {
       const v = roundInt(generic.landRate);
-      rows.push({ rpc: "Public RPC", landRate: v, label: `${v}%`, fill: landFill(v) });
+      rows.push({
+        rpc: "Public RPC",
+        landRate: v,
+        label: `${v}%`,
+        fill: landFill(v),
+      });
       // A plausible third endpoint sitting between the two tiers.
-      const mid = roundInt(((colo?.landRate ?? generic.landRate + 10) + generic.landRate) / 2);
-      rows.push({ rpc: "Backup RPC", landRate: mid, label: `${mid}%`, fill: landFill(mid) });
+      const mid = roundInt(
+        ((colo?.landRate ?? generic.landRate + 10) + generic.landRate) / 2
+      );
+      rows.push({
+        rpc: "Backup RPC",
+        landRate: mid,
+        label: `${mid}%`,
+        fill: landFill(mid),
+      });
     }
     return rows;
   }, [tiers]);
@@ -541,7 +568,8 @@ export default function Monitoring() {
         ts: mount,
         severity: "critical",
         source: "Operator",
-        message: "Kill switch engaged — all execution halted, positions frozen.",
+        message:
+          "Kill switch engaged — all execution halted, positions frozen.",
       });
     }
     if (breakerTripped) {
@@ -550,7 +578,8 @@ export default function Monitoring() {
         ts: mount - 8_000,
         severity: "critical",
         source: "Risk manager",
-        message: "Daily-loss circuit breaker tripped — new entries blocked until reset.",
+        message:
+          "Daily-loss circuit breaker tripped — new entries blocked until reset.",
       });
     }
     if (!geyser) {
@@ -559,7 +588,8 @@ export default function Monitoring() {
         ts: mount - 4_000,
         severity: "critical",
         source: "Geyser ingest",
-        message: "Geyser stream disconnected — slot feed stale, snipe loop disarmed.",
+        message:
+          "Geyser stream disconnected — slot feed stale, snipe loop disarmed.",
       });
     }
     if (!shred) {
@@ -568,7 +598,8 @@ export default function Monitoring() {
         ts: mount - 6_000,
         severity: "warning",
         source: "ShredStream",
-        message: "ShredStream link down — falling back to RPC slot subscription.",
+        message:
+          "ShredStream link down — falling back to RPC slot subscription.",
       });
     }
 
@@ -611,251 +642,247 @@ export default function Monitoring() {
     }
 
     return out.sort(
-      (a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || b.ts - a.ts,
+      (a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || b.ts - a.ts
     );
   }, [killed, breakerTripped, geyser, shred, health, internalMs, mount]);
 
-  const criticalCount = alerts.filter((a) => a.severity === "critical").length;
-  const warningCount = alerts.filter((a) => a.severity === "warning").length;
+  const criticalCount = alerts.filter(a => a.severity === "critical").length;
+  const warningCount = alerts.filter(a => a.severity === "warning").length;
 
   return (
-    <Layout>
-      <div className="space-y-4">
-        {/* Page header */}
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="flex items-center gap-2 text-[16px] font-semibold tracking-tight text-text">
-              <HeartPulse className="h-4 w-4 text-brand" />
-              Monitoring
-            </h1>
-            <p className="mt-0.5 text-[12px] text-muted-foreground">
-              Operational health of every module, link, and the dead-man switch.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <LiveDot tone={systemHealthy ? "accent" : "warn"} />
-              {systemHealthy ? "All systems nominal" : "Attention required"}
-            </span>
-            <Chip
-              tone={systemTone}
-              icon={systemHealthy ? <ShieldCheck /> : <AlertTriangle />}
-            >
-              system {systemLabel.toLowerCase()}
-            </Chip>
-          </div>
+    <div className="space-y-4">
+      {/* Page header */}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="flex items-center gap-2 text-[16px] font-semibold tracking-tight text-text">
+            <HeartPulse className="h-4 w-4 text-brand" />
+            Monitoring
+          </h1>
+          <p className="mt-0.5 text-[12px] text-muted-foreground">
+            Operational health of every module, link, and the dead-man switch.
+          </p>
         </div>
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <LiveDot tone={systemHealthy ? "accent" : "warn"} />
+            {systemHealthy ? "All systems nominal" : "Attention required"}
+          </span>
+          <Chip
+            tone={systemTone}
+            icon={systemHealthy ? <ShieldCheck /> : <AlertTriangle />}
+          >
+            system {systemLabel.toLowerCase()}
+          </Chip>
+        </div>
+      </div>
 
-        {/* Ops summary KPIs */}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatTile
-            label="Modules online"
-            value={
-              stateLoading && !health ? (
-                "—"
-              ) : (
-                <>
-                  {online}
-                  <span className="text-[14px] text-faint"> / {total}</span>
-                </>
-              )
-            }
-            sub={
-              degraded + offline === 0
-                ? "Full mesh healthy"
-                : `${degraded} degraded · ${offline} offline`
-            }
-            tone={offline > 0 ? "danger" : degraded > 0 ? "warn" : "up"}
-          />
-          <StatTile
-            label="Active alerts"
-            value={
+      {/* Ops summary KPIs */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile
+          label="Modules online"
+          value={
+            stateLoading && !health ? (
+              "—"
+            ) : (
               <>
-                {criticalCount + warningCount}
+                {online}
+                <span className="text-[14px] text-faint"> / {total}</span>
               </>
-            }
-            sub={`${criticalCount} critical · ${warningCount} warning`}
-            tone={criticalCount > 0 ? "danger" : warningCount > 0 ? "warn" : "up"}
-          />
-          <StatTile
-            label="Internal latency"
-            value={internalMs === null ? "—" : <>{roundInt(internalMs)} ms</>}
-            sub="Ingest to submit pipeline"
-            tone={
-              internalMs !== null && internalMs >= 52
-                ? "warn"
-                : "accent"
-            }
-          />
-          <StatTile
-            label="Dead-man switch"
-            value={deadManTripped ? "Tripped" : "Armed"}
-            sub={deadManReason}
-            tone={deadManTripped ? "danger" : "up"}
-          />
-        </div>
+            )
+          }
+          sub={
+            degraded + offline === 0
+              ? "Full mesh healthy"
+              : `${degraded} degraded · ${offline} offline`
+          }
+          tone={offline > 0 ? "danger" : degraded > 0 ? "warn" : "up"}
+        />
+        <StatTile
+          label="Active alerts"
+          value={<>{criticalCount + warningCount}</>}
+          sub={`${criticalCount} critical · ${warningCount} warning`}
+          tone={criticalCount > 0 ? "danger" : warningCount > 0 ? "warn" : "up"}
+        />
+        <StatTile
+          label="Internal latency"
+          value={internalMs === null ? "—" : <>{roundInt(internalMs)} ms</>}
+          sub="Ingest to submit pipeline"
+          tone={internalMs !== null && internalMs >= 52 ? "warn" : "accent"}
+        />
+        <StatTile
+          label="Dead-man switch"
+          value={deadManTripped ? "Tripped" : "Armed"}
+          sub={deadManReason}
+          tone={deadManTripped ? "danger" : "up"}
+        />
+      </div>
 
-        {/* Module health grid */}
+      {/* Module health grid */}
+      <Panel
+        title="Module health"
+        icon={<Server />}
+        actions={
+          <span className="num text-[11px] text-faint">
+            {total > 0 ? `${online}/${total} online` : "—"}
+          </span>
+        }
+      >
+        <ModuleGrid
+          health={health}
+          loading={healthLoading}
+          error={healthError}
+        />
+      </Panel>
+
+      {/* Connection health + dead-man switch */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Panel
-          title="Module health"
-          icon={<Server />}
+          title="Connection health"
+          icon={<Network />}
+          className="xl:col-span-2"
           actions={
-            <span className="num text-[11px] text-faint">
-              {total > 0 ? `${online}/${total} online` : "—"}
+            <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Signal className="h-3 w-3 text-up" />
+              ingest links
             </span>
           }
         >
-          <ModuleGrid health={health} loading={healthLoading} error={healthError} />
+          <div className="space-y-2.5 p-3.5">
+            <ConnectionRow
+              icon={<Database />}
+              name="Geyser"
+              up={geyser}
+              detail={geyser ? "gRPC slot + account stream" : "stream lost"}
+            />
+            <ConnectionRow
+              icon={<Radio />}
+              name="ShredStream"
+              up={shred}
+              detail={
+                shred ? "shred-level pre-confirmation" : "fallback to RPC"
+              }
+            />
+            <ConnectionRow
+              icon={<Cpu />}
+              name="RPC / submit"
+              up={rpcUp}
+              detail={
+                internalMs !== null
+                  ? `${roundInt(internalMs)}ms internal pipeline`
+                  : "submit path"
+              }
+            />
+          </div>
         </Panel>
 
-        {/* Connection health + dead-man switch */}
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-          <Panel
-            title="Connection health"
-            icon={<Network />}
-            className="xl:col-span-2"
-            actions={
-              <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <Signal className="h-3 w-3 text-up" />
-                ingest links
-              </span>
-            }
-          >
-            <div className="space-y-2.5 p-3.5">
-              <ConnectionRow
-                icon={<Database />}
-                name="Geyser"
-                up={geyser}
-                detail={geyser ? "gRPC slot + account stream" : "stream lost"}
-              />
-              <ConnectionRow
-                icon={<Radio />}
-                name="ShredStream"
-                up={shred}
-                detail={shred ? "shred-level pre-confirmation" : "fallback to RPC"}
-              />
-              <ConnectionRow
-                icon={<Cpu />}
-                name="RPC / submit"
-                up={rpcUp}
-                detail={
-                  internalMs !== null
-                    ? `${roundInt(internalMs)}ms internal pipeline`
-                    : "submit path"
-                }
-              />
-            </div>
-          </Panel>
-
-          {/* Dead-man switch detail card */}
-          <Panel title="Dead-man switch" icon={<Timer />}>
-            <div className="space-y-3 p-3.5">
+        {/* Dead-man switch detail card */}
+        <Panel title="Dead-man switch" icon={<Timer />}>
+          <div className="space-y-3 p-3.5">
+            <div
+              className={`rounded-[8px] border p-3 ${
+                deadManTripped
+                  ? "border-[color:color-mix(in_srgb,var(--danger)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--danger)_8%,transparent)]"
+                  : "border-[color:color-mix(in_srgb,var(--up)_28%,transparent)] bg-[color:color-mix(in_srgb,var(--up)_7%,transparent)]"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] uppercase tracking-wide text-faint">
+                  Status
+                </span>
+                <Chip
+                  tone={deadManTripped ? "danger" : "ok"}
+                  icon={deadManTripped ? <ShieldAlert /> : <ShieldCheck />}
+                >
+                  {deadManTripped ? "tripped" : "armed"}
+                </Chip>
+              </div>
               <div
-                className={`rounded-[8px] border p-3 ${
-                  deadManTripped
-                    ? "border-[color:color-mix(in_srgb,var(--danger)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--danger)_8%,transparent)]"
-                    : "border-[color:color-mix(in_srgb,var(--up)_28%,transparent)] bg-[color:color-mix(in_srgb,var(--up)_7%,transparent)]"
+                className={`num mt-2 text-[20px] font-semibold leading-none ${
+                  deadManTripped ? "text-danger" : "text-up"
                 }`}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] uppercase tracking-wide text-faint">
-                    Status
-                  </span>
-                  <Chip
-                    tone={deadManTripped ? "danger" : "ok"}
-                    icon={deadManTripped ? <ShieldAlert /> : <ShieldCheck />}
-                  >
-                    {deadManTripped ? "tripped" : "armed"}
-                  </Chip>
-                </div>
-                <div
-                  className={`num mt-2 text-[20px] font-semibold leading-none ${
-                    deadManTripped ? "text-danger" : "text-up"
-                  }`}
-                >
-                  {deadManTripped ? "HALTED" : "LIVE"}
-                </div>
-                <p className="mt-2 text-[12px] leading-snug text-muted-foreground">
-                  {deadManReason}
-                </p>
+                {deadManTripped ? "HALTED" : "LIVE"}
               </div>
-
-              <ul className="space-y-1.5 text-[11px] text-muted-foreground">
-                <li className="flex items-center justify-between">
-                  <span>Operator kill</span>
-                  <Chip tone={killed ? "danger" : "neutral"}>
-                    {killed ? "engaged" : "clear"}
-                  </Chip>
-                </li>
-                <li className="flex items-center justify-between">
-                  <span>Loss breaker</span>
-                  <Chip tone={breakerTripped ? "danger" : "neutral"}>
-                    {breakerTripped ? "tripped" : "clear"}
-                  </Chip>
-                </li>
-                <li className="flex items-center justify-between">
-                  <span>Ingest links</span>
-                  <Chip tone={rpcUp ? "ok" : "danger"}>
-                    {rpcUp ? "up" : "down"}
-                  </Chip>
-                </li>
-              </ul>
+              <p className="mt-2 text-[12px] leading-snug text-muted-foreground">
+                {deadManReason}
+              </p>
             </div>
-          </Panel>
-        </div>
 
-        {/* Land rate by RPC + alert feed */}
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-          <Panel
-            title="Land rate by RPC"
-            icon={<GaugeIcon />}
-            actions={
-              metrics ? (
-                <Chip tone="accent">
-                  <span className="num">{roundInt(metrics.landRatePct)}%</span>
-                  &nbsp;blended
+            <ul className="space-y-1.5 text-[11px] text-muted-foreground">
+              <li className="flex items-center justify-between">
+                <span>Operator kill</span>
+                <Chip tone={killed ? "danger" : "neutral"}>
+                  {killed ? "engaged" : "clear"}
                 </Chip>
-              ) : undefined
-            }
-          >
-            <LandRateByRpc
-              rows={landByRpc}
-              loading={tiersLoading}
-              error={tiersError}
-            />
-          </Panel>
-
-          <Panel
-            title="Alert feed"
-            icon={<BellRing />}
-            className="xl:col-span-2"
-            actions={
-              <div className="flex items-center gap-1.5">
-                {criticalCount > 0 && (
-                  <Chip tone="danger">
-                    <span className="num">{criticalCount}</span>&nbsp;crit
-                  </Chip>
-                )}
-                {warningCount > 0 && (
-                  <Chip tone="warn">
-                    <span className="num">{warningCount}</span>&nbsp;warn
-                  </Chip>
-                )}
-                {criticalCount + warningCount === 0 && (
-                  <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                    <LiveDot tone="accent" />
-                    quiet
-                  </span>
-                )}
-              </div>
-            }
-          >
-            <div className="max-h-[360px] overflow-y-auto scrollbar-thin">
-              <AlertFeed alerts={alerts} loading={healthLoading} now={now} />
-            </div>
-          </Panel>
-        </div>
+              </li>
+              <li className="flex items-center justify-between">
+                <span>Loss breaker</span>
+                <Chip tone={breakerTripped ? "danger" : "neutral"}>
+                  {breakerTripped ? "tripped" : "clear"}
+                </Chip>
+              </li>
+              <li className="flex items-center justify-between">
+                <span>Ingest links</span>
+                <Chip tone={rpcUp ? "ok" : "danger"}>
+                  {rpcUp ? "up" : "down"}
+                </Chip>
+              </li>
+            </ul>
+          </div>
+        </Panel>
       </div>
-    </Layout>
+
+      {/* Land rate by RPC + alert feed */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <Panel
+          title="Land rate by RPC"
+          icon={<GaugeIcon />}
+          actions={
+            metrics ? (
+              <Chip tone="accent">
+                <span className="num">{roundInt(metrics.landRatePct)}%</span>
+                &nbsp;blended
+              </Chip>
+            ) : undefined
+          }
+        >
+          <LandRateByRpc
+            rows={landByRpc}
+            loading={tiersLoading}
+            error={tiersError}
+          />
+        </Panel>
+
+        <Panel
+          title="Alert feed"
+          icon={<BellRing />}
+          className="xl:col-span-2"
+          actions={
+            <div className="flex items-center gap-1.5">
+              {criticalCount > 0 && (
+                <Chip tone="danger">
+                  <span className="num">{criticalCount}</span>&nbsp;crit
+                </Chip>
+              )}
+              {warningCount > 0 && (
+                <Chip tone="warn">
+                  <span className="num">{warningCount}</span>&nbsp;warn
+                </Chip>
+              )}
+              {criticalCount + warningCount === 0 && (
+                <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <LiveDot tone="accent" />
+                  quiet
+                </span>
+              )}
+            </div>
+          }
+        >
+          <div className="max-h-[360px] overflow-y-auto scrollbar-thin">
+            <AlertFeed alerts={alerts} loading={healthLoading} now={now} />
+          </div>
+        </Panel>
+      </div>
+    </div>
   );
 }

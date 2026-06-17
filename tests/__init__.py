@@ -1,0 +1,1 @@
+"""AATS test suite."""

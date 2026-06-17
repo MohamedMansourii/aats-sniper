@@ -1,0 +1,45 @@
+# =============================================================================
+# E4 override — bind the control-plane port to host LOOPBACK only.
+# =============================================================================
+# ADDITIVE override (do NOT edit the base docker-compose.yml — parallel-lane
+# rule). Apply with:
+#
+#     docker compose \
+#       -f docker-compose.yml \
+#       -f deploy/docker-compose.controlplane-bind.override.yml \
+#       up
+#
+# WHAT IT CHANGES
+#   The base compose publishes the control plane as "8787:8787", which binds the
+#   host side to 0.0.0.0:8787 — reachable on EVERY host interface. This override
+#   re-publishes it as "127.0.0.1:8787:8787" so the de-risk/kill API is reachable
+#   only from the host's loopback. Remote operators go through the nginx reverse
+#   proxy (deploy/nginx/aats-controlplane.conf): Internet -> nginx (TLS + IP
+#   allowlist) -> 127.0.0.1:8787. The dashboard is restricted the same way.
+#
+#   It also pins the in-process bind host of the uvicorn server to loopback via
+#   CONTROL_PLANE_BIND_HOST so that, even if the entrypoint is changed to honor
+#   it, the app never binds 0.0.0.0 inside the container by default.
+#
+# WHY BOTH
+#   - The published-port restriction (127.0.0.1:...) controls HOST exposure.
+#   - CONTROL_PLANE_BIND_HOST controls the IN-CONTAINER bind (defense in depth;
+#     relevant if the container is run with --network host).
+#
+# This composes with the existing operator-bearer-token auth on every POST and
+# the de-risk-only contract. None of those semantics change.
+# =============================================================================
+
+services:
+  aats-controlplane:
+    environment:
+      # Belt-and-braces: the app already defaults to 127.0.0.1; pin it here too.
+      CONTROL_PLANE_BIND_HOST: "127.0.0.1"
+    ports:
+      # Host loopback only. Replace the base "8787:8787" mapping.
+      - "127.0.0.1:8787:8787"
+
+  dashboard:
+    ports:
+      # Operator UI also loopback-only; reach it via the nginx proxy remotely.
+      - "127.0.0.1:3000:3000"

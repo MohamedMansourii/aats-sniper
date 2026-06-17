@@ -16,16 +16,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Chip, LiveDot, Panel, Spark, StatTile } from "@/components/kit";
+import { Chip, LiveDot, Panel, RedFlags, Spark, StatTile } from "@/components/kit";
 import type { ChipTone } from "@/components/kit";
 import { useSnipeFeed } from "@/lib/api";
-import type {
-  GateReason,
-  SnipeEvent,
-  SnipeSource,
-} from "@/lib/types";
+import type { GateReason, SnipeEvent, SnipeSource } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import Layout from "@/components/Layout";
+import { CHART } from "@/lib/chart-colors";
 
 /* -------------------------------------------------------------------------- */
 /*  Display maps                                                              */
@@ -119,14 +115,17 @@ function useFreshIds(events: SnipeEvent[]): Set<string> {
     // On first mount the whole seed is "seen" but should not flash.
     if (incoming.length === 0 || seen.current.size === incoming.length) return;
 
-    setFresh((cur) => {
+    // Intentional: flag the just-arrived rows as fresh, then schedule a timer
+    // to clear the flash. Timer-driven highlight is a legitimate effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFresh(cur => {
       const next = new Set(cur);
       for (const id of incoming) next.add(id);
       return next;
     });
 
     const t = window.setTimeout(() => {
-      setFresh((cur) => {
+      setFresh(cur => {
         const next = new Set(cur);
         for (const id of incoming) next.delete(id);
         return next;
@@ -146,12 +145,32 @@ function useFreshIds(events: SnipeEvent[]): Set<string> {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Wall clock                                                                 */
+/*  A ticking "now" so time-windowed metrics (events/min over a rolling 60s)   */
+/*  re-evaluate as time passes — not only when a new event arrives. Reading    */
+/*  the clock from state keeps render pure (no Date.now() during render).      */
+/* -------------------------------------------------------------------------- */
+
+function useNow(intervalMs = 1000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), intervalMs);
+    return () => window.clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Page                                                                      */
 /* -------------------------------------------------------------------------- */
 
 export default function SnipeFeed() {
   const { events, loading, error } = useSnipeFeed();
   const fresh = useFreshIds(events);
+  // Ticking clock: re-runs the rolling-window math every second so the
+  // events/min counter decays to 0 when the stream goes quiet instead of
+  // freezing at its last value (the stale-counter bug).
+  const now = useNow(1000);
 
   const [action, setAction] = useState<ActionFilter>("all");
   const [source, setSource] = useState<SnipeSource | "all">("all");
@@ -161,23 +180,19 @@ export default function SnipeFeed() {
     if (events.length === 0) {
       return { perMin: 0, acceptPct: 0, sniped: 0, vetoed: 0, total: 0 };
     }
-    const now = Date.now();
-    const lastMin = events.filter((e) => now - e.ts <= 60_000).length;
-    const span = Math.max(
-      1,
-      (events[0].ts - events[events.length - 1].ts) / 60_000,
-    );
-    const perMin = lastMin > 0 ? lastMin : Math.round(events.length / span);
-    const sniped = events.filter((e) => e.action === "sniped").length;
-    const vetoed = events.filter((e) => e.action === "vetoed").length;
+    // Count only events inside the rolling trailing-60s window. As `now`
+    // advances each second, old events fall out and the rate updates live.
+    const lastMin = events.filter(e => now - e.ts <= 60_000).length;
+    const sniped = events.filter(e => e.action === "sniped").length;
+    const vetoed = events.filter(e => e.action === "vetoed").length;
     return {
-      perMin: Math.round(perMin),
+      perMin: lastMin,
       acceptPct: Math.round((sniped / events.length) * 100),
       sniped,
       vetoed,
       total: events.length,
     };
-  }, [events]);
+  }, [events, now]);
 
   /* ---- throughput sparkline: events bucketed into ~5s windows ---- */
   const throughput = useMemo(() => {
@@ -198,11 +213,11 @@ export default function SnipeFeed() {
   const rows = useMemo(
     () =>
       events.filter(
-        (e) =>
+        e =>
           (action === "all" || e.action === action) &&
-          (source === "all" || e.source === source),
+          (source === "all" || e.source === source)
       ),
-    [events, action, source],
+    [events, action, source]
   );
 
   const counts = useMemo(() => {
@@ -217,7 +232,6 @@ export default function SnipeFeed() {
   }, [events]);
 
   return (
-    <Layout>
     <div className="mx-auto flex max-w-[1400px] flex-col gap-3">
       {/* Page heading */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -264,7 +278,7 @@ export default function SnipeFeed() {
             Flow
           </div>
           <div className="mt-2">
-            <Spark data={throughput} tone="#22e39a" height={34} />
+            <Spark data={throughput} tone={CHART.accent} height={34} />
           </div>
         </div>
       </div>
@@ -281,7 +295,7 @@ export default function SnipeFeed() {
               aria-label="Filter by action"
               className="flex items-center gap-0.5 rounded-md border border-border bg-panel2 p-0.5"
             >
-              {ACTION_FILTERS.map((f) => {
+              {ACTION_FILTERS.map(f => {
                 const selected = action === f;
                 return (
                   <button
@@ -294,14 +308,14 @@ export default function SnipeFeed() {
                       "num inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium capitalize transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                       selected
                         ? "bg-hover text-text"
-                        : "text-muted-foreground hover:text-text",
+                        : "text-muted-foreground hover:text-text"
                     )}
                   >
                     {f}
                     <span
                       className={cn(
                         "text-[10px]",
-                        selected ? "text-brand" : "text-faint",
+                        selected ? "text-brand" : "text-faint"
                       )}
                     >
                       {counts[f]}
@@ -314,7 +328,7 @@ export default function SnipeFeed() {
             {/* Source filter */}
             <Select
               value={source}
-              onValueChange={(v) => setSource(v as SnipeSource | "all")}
+              onValueChange={v => setSource(v as SnipeSource | "all")}
             >
               <SelectTrigger
                 aria-label="Filter by source"
@@ -325,7 +339,7 @@ export default function SnipeFeed() {
               </SelectTrigger>
               <SelectContent className="text-[12px]">
                 <SelectItem value="all">All sources</SelectItem>
-                {SOURCES.map((s) => (
+                {SOURCES.map(s => (
                   <SelectItem key={s} value={s}>
                     {SOURCE_LABEL[s]}
                   </SelectItem>
@@ -345,7 +359,6 @@ export default function SnipeFeed() {
         />
       </Panel>
     </div>
-    </Layout>
   );
 }
 
@@ -378,7 +391,9 @@ function FeedTable({
     return (
       <div className="flex flex-col items-center justify-center gap-2 px-4 py-16 text-center">
         <XOctagon className="h-5 w-5 text-danger" />
-        <div className="text-[13px] font-medium text-text">Feed interrupted</div>
+        <div className="text-[13px] font-medium text-text">
+          Feed interrupted
+        </div>
         <div className="num text-[11px] text-muted-foreground">{error}</div>
       </div>
     );
@@ -426,6 +441,7 @@ function FeedTable({
             <th className={COL_HEAD}>Token</th>
             <th className={cn(COL_HEAD, "w-[120px]")}>Source</th>
             <th className={COL_HEAD}>Gate verdict</th>
+            <th className={COL_HEAD}>Safety red flags</th>
             <th className={cn(COL_HEAD, "w-[68px] text-right")}>Model p</th>
             <th className={cn(COL_HEAD, "w-[64px] text-right")}>
               <span className="inline-flex items-center gap-1">
@@ -438,7 +454,7 @@ function FeedTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((e) => (
+          {rows.map(e => (
             <FeedRow key={e.id} e={e} fresh={fresh.has(e.id)} />
           ))}
         </tbody>
@@ -461,7 +477,7 @@ function FeedRow({ e, fresh }: { e: SnipeEvent; fresh: boolean }) {
       className={cn(
         "border-b border-border/60 transition-colors hover:bg-hover",
         fresh &&
-          "bg-[color:color-mix(in_srgb,var(--accent)_10%,transparent)] motion-reduce:bg-[color:color-mix(in_srgb,var(--accent)_6%,transparent)]",
+          "bg-[color:color-mix(in_srgb,var(--accent)_10%,transparent)] motion-reduce:bg-[color:color-mix(in_srgb,var(--accent)_6%,transparent)]"
       )}
     >
       {/* Time */}
@@ -476,7 +492,11 @@ function FeedRow({ e, fresh }: { e: SnipeEvent; fresh: boolean }) {
         ) : (
           <span
             className={cn(
-              e.slotDelay <= 2 ? "text-up" : e.slotDelay === 3 ? "text-warn" : "text-down",
+              e.slotDelay <= 2
+                ? "text-up"
+                : e.slotDelay === 3
+                  ? "text-warn"
+                  : "text-down"
             )}
           >
             N+{e.slotDelay}
@@ -502,12 +522,20 @@ function FeedRow({ e, fresh }: { e: SnipeEvent; fresh: boolean }) {
           <Chip tone="ok">passed</Chip>
         ) : (
           <div className="flex flex-wrap items-center gap-1">
-            {e.gateReasons.map((r) => (
+            {e.gateReasons.map(r => (
               <Chip key={r} tone="danger">
                 {GATE_LABEL[r]}
               </Chip>
             ))}
           </div>
+        )}
+      </td>
+
+      {/* Token-safety scanner red flags (honeypot / not-sellable / clusters …) */}
+      <td className="px-3 py-1.5">
+        <RedFlags flags={e.redFlags} hideWhenClean />
+        {e.redFlags.length === 0 && (
+          <span className="text-[11px] text-faint">—</span>
         )}
       </td>
 
@@ -519,7 +547,7 @@ function FeedRow({ e, fresh }: { e: SnipeEvent; fresh: boolean }) {
               ? "text-faint"
               : overThreshold
                 ? "text-up"
-                : "text-muted-foreground",
+                : "text-muted-foreground"
           )}
         >
           {fmtP(e.modelP)}
@@ -528,7 +556,11 @@ function FeedRow({ e, fresh }: { e: SnipeEvent; fresh: boolean }) {
 
       {/* Smart wallets */}
       <td className="num px-3 py-1.5 text-right tabular-nums">
-        <span className={cn(e.smartWallets >= 8 ? "text-brand" : "text-muted-foreground")}>
+        <span
+          className={cn(
+            e.smartWallets >= 8 ? "text-brand" : "text-muted-foreground"
+          )}
+        >
           {e.smartWallets}
         </span>
       </td>
@@ -545,7 +577,11 @@ function FeedRow({ e, fresh }: { e: SnipeEvent; fresh: boolean }) {
         {pnl === null ? (
           <span className="text-faint">—</span>
         ) : (
-          <span className={cn(e.pnlPct !== null && e.pnlPct >= 0 ? "text-up" : "text-down")}>
+          <span
+            className={cn(
+              e.pnlPct !== null && e.pnlPct >= 0 ? "text-up" : "text-down"
+            )}
+          >
             {pnl}
           </span>
         )}

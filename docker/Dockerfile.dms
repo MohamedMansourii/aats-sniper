@@ -1,0 +1,46 @@
+# AATS — aats-dms service Dockerfile (Dead-Man's Switch watchdog)
+# External failure domain — separate from aats-slow and aats-hotcore.
+#
+# Behavior (infrastructure.md §8, FR-033, AC-045/046):
+#   - Monitors the FAST-loop heartbeat key in Redis.
+#   - On heartbeat absence >= T_DMS (default 60s, env var OQ-006):
+#     submits pre-signed flatten transactions to the block engine.
+#   - The pre-signed flatten txs are produced through aats-signer;
+#     aats-dms holds SIGNED bytes, never the raw key.
+#   - Cannot be disarmed by LLM, market event, or risk update —
+#     only by a valid heartbeat or explicit operator config (AC-046).
+#
+# No secrets in this file.
+
+FROM python:3.11.9-slim@sha256:7b09a3b7ccb95df60a78c4d2b0e52fc78d4e64fe9a9fddb0f9a0ea50d7cd8d9a AS builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+COPY requirements/requirements.txt /build/requirements.txt
+RUN pip install --no-cache-dir --prefix=/install -r /build/requirements.txt
+
+FROM python:3.11.9-slim@sha256:7b09a3b7ccb95df60a78c4d2b0e52fc78d4e64fe9a9fddb0f9a0ea50d7cd8d9a AS runtime
+
+LABEL org.opencontainers.image.title="aats-dms"
+LABEL org.opencontainers.image.description="AATS dead-man's switch watchdog (separate failure domain)"
+
+WORKDIR /app
+COPY --from=builder /install /usr/local
+COPY aats/ /app/aats/
+COPY pyproject.toml /app/pyproject.toml
+
+RUN adduser --disabled-password --gecos "" --uid 1000 aats
+USER aats
+
+ENV DRY_RUN_ENABLED=true
+# DMS fires at T_DMS seconds of heartbeat absence (env var, OQ-006, default 60s)
+ENV T_DMS_SECONDS=60
+ENV PYTHONUNBUFFERED=1
+ENV METRICS_PORT=9106
+EXPOSE 9106
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9106/health')" || exit 1
+
+# Real DMS entrypoint wired in T-322 / T-342
+CMD ["python", "-m", "aats.dms"]

@@ -1,0 +1,36 @@
+# ============================================================
+# aats-backup.timer — daily Redis backup schedule
+# ============================================================
+# PURPOSE
+#   Fire the aats-backup.service once a day at 03:00 UTC
+#   (typically a low-activity window for Solana meme-coins).
+#
+# INSTALL:
+#   systemctl daemon-reload
+#   systemctl enable --now aats-backup.timer
+#
+# VERIFY:
+#   systemctl list-timers --all | grep aats
+#   systemctl status aats-backup.timer
+#
+# MANUAL TRIGGER (test the backup without waiting for the timer):
+#   systemctl start aats-backup
+#
+# SYNTAX CHECK:
+#   systemd-analyze verify /etc/systemd/system/aats-backup.timer
+# ============================================================
+
+[Unit]
+Description=Daily AATS Redis snapshot backup
+Documentation=file:///opt/aats/docs/redis-backup-restore.md
+
+[Timer]
+# Daily at 03:00 UTC. Adjust to match your trading timezone if desired.
+OnCalendar=*-*-* 03:00:00 UTC
+# Fire immediately at boot if the timer was missed (e.g. host was down).
+Persistent=true
+# Random delay up to 5 minutes — avoids thundering-herd if multiple hosts.
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

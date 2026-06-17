@@ -1,0 +1,72 @@
+# ============================================================
+# aats-controlplane.service — systemd unit for the control plane only
+# ============================================================
+# PURPOSE
+#   Bring up ONLY the control plane + its dependencies (redis,
+#   dashboard, prometheus, grafana, alertmanager) WITHOUT the
+#   trading hot-core or the DMS. Useful for operators who want
+#   the observability/dashboard stack up independently — e.g.
+#   during maintenance, or before the trading loop is armed.
+#
+#   For the FULL stack (all 11 services including hotcore + DMS),
+#   use aats.service.
+#
+# INSTALL:
+#   Copy to /etc/systemd/system/aats-controlplane.service
+#   systemctl daemon-reload
+#   (do NOT enable this unit AND aats.service simultaneously)
+#
+# SAFETY:
+#   This unit applies the E4 loopback-bind override so the
+#   control plane binds 127.0.0.1:8787 and the dashboard
+#   binds 127.0.0.1:3000 — not 0.0.0.0.
+#   The E4 override file: deploy/docker-compose.controlplane-bind.override.yml
+#
+# SYNTAX CHECK:
+#   systemd-analyze verify /etc/systemd/system/aats-controlplane.service
+# ============================================================
+
+[Unit]
+Description=AATS control-plane + observability stack (control only, no hotcore)
+Documentation=file:///opt/aats/docs/deploy-ops-guide.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/aats
+EnvironmentFile=-/opt/aats/.env
+Environment=COMPOSE_PROJECT_NAME=aats
+
+ExecStartPre=/bin/bash /opt/aats/scripts/startup-self-check.sh
+
+# Apply the E4 loopback-bind override alongside the base compose.
+ExecStart=/usr/bin/docker compose \
+    --project-directory /opt/aats \
+    --env-file /opt/aats/.env \
+    -f docker-compose.yml \
+    -f deploy/docker-compose.controlplane-bind.override.yml \
+    up --detach --remove-orphans \
+    redis aats-controlplane dashboard prometheus grafana alertmanager
+
+ExecStop=/usr/bin/docker compose \
+    --project-directory /opt/aats \
+    down --timeout 30
+
+ExecReload=/usr/bin/docker compose \
+    --project-directory /opt/aats \
+    up --detach --remove-orphans \
+    redis aats-controlplane dashboard prometheus grafana alertmanager
+
+Restart=on-failure
+RestartSec=10s
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aats-controlplane
+
+[Install]
+WantedBy=multi-user.target

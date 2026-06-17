@@ -1,0 +1,47 @@
+# AATS — aats-signer service Dockerfile (Rust, minimal surface)
+# The ONLY holder of the wallet secret.
+#
+# SECURITY CONTRACT (ADR-0009, infrastructure.md §5):
+#   - NO inbound network interface except the local Unix-domain socket.
+#   - NO untrusted-byte decode beyond signed tx bytes.
+#   - Secret fetched from Vault via short-lived token at boot (§5.3).
+#   - mlock + zeroize on exit — key never in env var, never in logs.
+#
+# This image is as minimal as possible — no shell, no package manager.
+# Audited by crypto-security-engineer at G4 (T-403).
+
+# ── Stage 1: Rust build ────────────────────────────────────────────────────
+FROM rust:1.79.0-slim@sha256:placeholder AS rust-builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY rust/ /build/rust/
+
+WORKDIR /build/rust
+RUN cargo build --release --bin aats-signer
+
+# ── Stage 2: distroless runtime (minimal attack surface) ───────────────────
+# Note: crypto-security-engineer (T-251 / T-352a) may replace this with a
+# custom static musl binary. Distroless is the hardened default.
+FROM gcr.io/distroless/cc-debian12:latest@sha256:placeholder AS runtime
+
+LABEL org.opencontainers.image.title="aats-signer"
+LABEL org.opencontainers.image.description="AATS minimal-surface signer (ADR-0009)"
+
+COPY --from=rust-builder /build/rust/target/release/aats-signer /usr/local/bin/aats-signer
+
+# Non-root UID 1000 (distroless has no adduser; use numeric UID)
+USER 1000
+
+# Metrics port ONLY — no other inbound network
+ENV METRICS_PORT=9105
+EXPOSE 9105
+
+# No network healthcheck — the signer has no HTTP server by default.
+# Liveness is monitored via the metrics heartbeat gauge.
+
+CMD ["/usr/local/bin/aats-signer"]

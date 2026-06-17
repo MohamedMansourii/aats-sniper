@@ -34,6 +34,24 @@ wallet*.json
 trade-wallet*.json
 secrets/
 
+# --- rust build artifacts ---
+rust/target/
+rust/**/target/
+
+# --- model artifacts (generated offline; regenerable via `python -m aats.models.train_snipe`) ---
+models/*.onnx
+models/*.pkl
+# T-310 snipe-classifier exported binaries (regenerable; the MODEL_CARD.md + metrics.json
+# + reliability_diagram.json text evidence under artifacts/ ARE committed).
+aats/models/artifacts/*.onnx
+aats/models/artifacts/*.pkl
+data/labels/
+data/feature_frames/
+data/recorded/
+
+# --- detect-secrets baseline (committed separately by crypto-security-engineer) ---
+# .secrets.baseline  <- intentionally NOT ignored; committed when T-403 runs
+
 # --- os / editor noise ---
 .DS_Store
 Thumbs.db

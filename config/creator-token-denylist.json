@@ -1,0 +1,38 @@
+{
+  "$schema": "https://aats.local/schemas/creator-token-denylist.v1.json",
+  "version": "1.0.0",
+  "owner": "risk-guardrails-engineer",
+  "task": "E2",
+  "authority": "ENHANCEMENT E2 — creator/token denylist + trusted allowlist pre-filter, applied BEFORE the sub-10ms pre-trade safety gate (aats/risk/pretrade_gate.py).",
+  "HARD_RULES": {
+    "denylist_can_only_reject": "Every entry in `denylist.creators` / `denylist.mints` can ONLY cause a pre-gate REJECT. There is NO field here that sizes a trade, triggers a buy, widens a stop, or raises a cap. A denylist is structurally a veto — it can only DE-RISK / exclude.",
+    "allowlist_does_not_bypass_safety": "`allowlist.creators` / `allowlist.mints` mark a candidate TRUSTED. Trust does NOT skip the safety gate: an allowlisted candidate STILL runs the full PreTradeSafetyGate (freeze/mint authority, LP lock, cluster/concentration, taxes, staleness). The allowlist only suppresses *manual operator denylist additions* you might later add by mistake — it never green-lights anything and is never a standalone buy trigger.",
+    "denylist_wins_ties": "If a key appears in BOTH the denylist and the allowlist, the DENYLIST wins (fail-closed). Safety beats convenience, always.",
+    "slow_loop_only_curation": "Curating this file (adding scam creators/mints) is a SLOW-LOOP / operator activity. It is read by the FAST path as already-resolved DATA (a frozen in-memory set), never computed on the hot path. The hot path does a single O(1) set membership test on the pre-resolved snapshot.",
+    "hot_reloadable": "The file is HOT-RELOADABLE: the loader stat()s the file (mtime + size) on a throttled cadence and atomically swaps the in-memory snapshot when the file changes. A malformed reload is REJECTED and the previous good snapshot is retained (fail-safe: never widen the denylist by accident, never drop it because of a typo).",
+    "point_in_time": "Membership is a property of the KEY (wallet/mint string), not of any future price. There is no compute-time leak: the same set membership test runs in live and in backtest. event_time is carried through purely so the reject reason can be stamped at the decision slot.",
+    "no_secrets": "This file contains PUBLIC on-chain addresses only (creator wallets, token mints). No private keys, no API keys. Addresses are public information."
+  },
+  "denylist": {
+    "creators": [
+      {
+        "wallet": "Rug1111111111111111111111111111111111111111",
+        "reason": "seed_example_known_serial_rugger",
+        "added_by": "risk-guardrails-engineer",
+        "note": "SEED EXAMPLE ONLY — replace with real curated scam-creator wallets before any live run."
+      }
+    ],
+    "mints": [
+      {
+        "mint": "Scam1111111111111111111111111111111111111111",
+        "reason": "seed_example_known_honeypot_mint",
+        "added_by": "risk-guardrails-engineer",
+        "note": "SEED EXAMPLE ONLY — replace with real curated scam token mints before any live run."
+      }
+    ]
+  },
+  "allowlist": {
+    "creators": [],
+    "mints": []
+  }
+}

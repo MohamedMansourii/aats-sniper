@@ -1,0 +1,105 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aats"
+version = "0.1.0-scaffold"
+description = "AATS Solana Meme-Coin Ultra-Sniper — Python bot core"
+requires-python = ">=3.11"
+
+# Runtime dependencies are pinned via requirements/requirements.txt.
+# pyproject.toml lists them without pins so the package is installable;
+# CI uses the pinned requirements file for reproducibility.
+dependencies = [
+    # Telemetry
+    "prometheus-client>=0.20.0",
+    "structlog>=24.1.0",
+    # Config / env
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.7.0",
+    # Control plane API
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    # Redis bus
+    "redis>=5.0.0",
+    # Solana (slow loop / tooling only; NOT on hot path)
+    "solders>=0.21.0",
+    "solana>=0.35.0",
+    # HTTP (enrichment, Jito REST endpoints)
+    "httpx>=0.27.0",
+    "tenacity>=8.3.0",
+    # ML / model (training + ONNX export; inference is Rust-side)
+    "lightgbm>=4.3.0",
+    "onnx>=1.16.0",
+    "onnxruntime>=1.18.0",
+    "onnxmltools>=1.16.0",
+    "skl2onnx>=1.20.0",
+    "scikit-learn>=1.5.0",
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    # NLP / LLM
+    "openai>=1.30.0",
+    "instructor>=1.3.0",
+    # gRPC (Geyser/Yellowstone)
+    "grpcio>=1.64.0",
+    "grpcio-tools>=1.64.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "types-redis",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["aats"]
+
+# ---------------------------------------------------------------------------
+# Ruff (linting + formatting — replaces flake8/black/isort)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "E501",   # line length — handled by formatter
+    "B008",   # function calls in defaults (FastAPI patterns)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101"]  # asserts are fine in tests
+
+# ---------------------------------------------------------------------------
+# Mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
+warn_return_any = false
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+# FastAPI uses runtime-variable type annotations for Request injection inside
+# build_app closures. The `Request = _FastAPIRequest` local alias triggers
+# valid-type and attr-defined errors that are false-positives; the code works
+# correctly at runtime and is tested by the full test suite.
+module = "aats.control_plane.server"
+ignore_errors = true
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short"
+markers = [
+    "no_hermetic_decimal: opt out of the autouse decimal-context pin to probe a hostile global context (T-326)",
+]

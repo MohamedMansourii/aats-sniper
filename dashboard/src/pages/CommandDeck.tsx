@@ -44,22 +44,7 @@ import {
   type ChipTone,
   type StatTone,
 } from "@/components/kit";
-import Layout from "@/components/Layout";
-
-/* -------------------------------------------------------------------------- */
-/*  Palette (hardcoded hex — recharts canvas cannot read CSS vars)            */
-/* -------------------------------------------------------------------------- */
-
-const HEX = {
-  accent: "#22e39a",
-  up: "#22e39a",
-  down: "#ff5d5d",
-  warn: "#ffb020",
-  info: "#4aa3ff",
-  violet: "#8b7bff",
-  border: "#1e242c",
-  faint: "#646e7e",
-} as const;
+import { CHART as HEX } from "@/lib/chart-colors";
 
 /* -------------------------------------------------------------------------- */
 /*  Display helpers — every number rounded for display                        */
@@ -152,7 +137,10 @@ function useSeries(value: number | undefined, cap = 24): number[] {
     if (value === undefined || !Number.isFinite(value)) return;
     if (last.current === value) return;
     last.current = value;
-    setSeries((cur) => [...cur, value].slice(-cap));
+    // Intentional: accumulate a rolling history from a live external value as
+    // it ticks in. This is stateful-over-time derivation an effect must own.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSeries(cur => [...cur, value].slice(-cap));
   }, [value, cap]);
   return series;
 }
@@ -178,8 +166,8 @@ function LatencyBudgetBody() {
     return <ErrorNote message={error ?? "No latency data"} />;
   }
 
-  const chartData = data.hops.map((h) => ({ ...h }));
-  const maxBudget = Math.max(...data.hops.map((h) => h.budgetMs), 1);
+  const chartData = data.hops.map(h => ({ ...h }));
+  const maxBudget = Math.max(...data.hops.map(h => h.budgetMs), 1);
 
   return (
     <div className="space-y-3">
@@ -206,7 +194,7 @@ function LatencyBudgetBody() {
               }}
             />
             <Bar dataKey="ms" radius={[2, 2, 2, 2]} isAnimationActive={false}>
-              {chartData.map((h) => (
+              {chartData.map(h => (
                 <Cell key={h.name} fill={hopColor(h)} />
               ))}
             </Bar>
@@ -215,7 +203,7 @@ function LatencyBudgetBody() {
       </div>
 
       <div className="space-y-1 border-t border-border pt-2.5">
-        {data.hops.map((h) => {
+        {data.hops.map(h => {
           const tight = h.ms / h.budgetMs > 0.92;
           return (
             <div
@@ -382,7 +370,7 @@ function PositionsSummary() {
           </tr>
         </thead>
         <tbody>
-          {open.map((p) => {
+          {open.map(p => {
             const up = p.currentPct >= 0;
             return (
               <tr
@@ -456,7 +444,7 @@ function LiveFeed() {
 
   return (
     <ul className="divide-y divide-border">
-      {recent.map((e) => (
+      {recent.map(e => (
         <li
           key={e.id}
           className="flex items-center gap-2 px-3 py-2 transition-colors hover:bg-hover"
@@ -465,7 +453,9 @@ function LiveFeed() {
             <span className="text-[12px] font-semibold text-text">
               {e.token}
             </span>
-            <span className="num text-[10px] text-faint">{ago(e.ts, now)} ago</span>
+            <span className="num text-[10px] text-faint">
+              {ago(e.ts, now)} ago
+            </span>
           </div>
           <Chip tone={SOURCE_META[e.source].tone}>
             {SOURCE_META[e.source].label}
@@ -517,10 +507,10 @@ function SmartMoneyStrip() {
   }
 
   const recent = events.slice(0, 20);
-  const sniped = recent.filter((e) => e.action === "sniped");
+  const sniped = recent.filter(e => e.action === "sniped");
   const totalWallets = sniped.reduce((acc, e) => acc + e.smartWallets, 0);
   const hottest = [...recent]
-    .filter((e) => e.smartWallets > 0)
+    .filter(e => e.smartWallets > 0)
     .sort((a, b) => b.smartWallets - a.smartWallets)
     .slice(0, 4);
 
@@ -541,7 +531,7 @@ function SmartMoneyStrip() {
         <EmptyNote message="No smart-money confluence in recent window" />
       ) : (
         <ul className="space-y-1.5">
-          {hottest.map((e) => (
+          {hottest.map(e => (
             <li
               key={e.id}
               className="flex items-center justify-between gap-2 rounded-md border border-border bg-panel2 px-2.5 py-1.5"
@@ -712,77 +702,75 @@ function KpiTile({
 
 export default function CommandDeck() {
   return (
-    <Layout>
-      <div className="space-y-4">
-        {/* Page header */}
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-[15px] font-semibold tracking-tight text-text">
-              Command deck
-            </h1>
-            <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <LiveDot tone="accent" />
-              Live telemetry
-            </span>
-          </div>
-          <span className="num hidden text-[11px] text-faint sm:block">
-            refresh ~1.5s
+    <div className="space-y-4">
+      {/* Page header */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <h1 className="text-[15px] font-semibold tracking-tight text-text">
+            Command deck
+          </h1>
+          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <LiveDot tone="accent" />
+            Live telemetry
           </span>
         </div>
+        <span className="num hidden text-[11px] text-faint sm:block">
+          refresh ~1.5s
+        </span>
+      </div>
 
-        {/* KPI row */}
-        <KpiRow />
+      {/* KPI row */}
+      <KpiRow />
 
-        {/* Middle: live feed + latency budget */}
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-          <Panel
-            title="Live snipe feed"
-            icon={<Crosshair />}
-            actions={
-              <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <LiveDot tone="accent" />
-                streaming
-              </span>
-            }
-            className="xl:col-span-2"
-          >
-            <LiveFeed />
-          </Panel>
-
-          <Panel title="Latency budget" icon={<GaugeIcon />}>
-            <LatencyBudgetBody />
-          </Panel>
-        </div>
-
-        {/* Loop status strip */}
+      {/* Middle: live feed + latency budget */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Panel
-          title="Loop status"
-          icon={<ArrowRightLeft />}
+          title="Live snipe feed"
+          icon={<Crosshair />}
           actions={
             <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Radio className="h-3 w-3 text-up" />
-              triple-loop
+              <LiveDot tone="accent" />
+              streaming
             </span>
           }
+          className="xl:col-span-2"
         >
-          <LoopStrip />
+          <LiveFeed />
         </Panel>
 
-        {/* Bottom: positions summary + smart money */}
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-          <Panel
-            title="Open positions"
-            icon={<Wallet />}
-            className="xl:col-span-2"
-          >
-            <PositionsSummary />
-          </Panel>
-
-          <Panel title="Smart money" icon={<Users />}>
-            <SmartMoneyStrip />
-          </Panel>
-        </div>
+        <Panel title="Latency budget" icon={<GaugeIcon />}>
+          <LatencyBudgetBody />
+        </Panel>
       </div>
-    </Layout>
+
+      {/* Loop status strip */}
+      <Panel
+        title="Loop status"
+        icon={<ArrowRightLeft />}
+        actions={
+          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <Radio className="h-3 w-3 text-up" />
+            triple-loop
+          </span>
+        }
+      >
+        <LoopStrip />
+      </Panel>
+
+      {/* Bottom: positions summary + smart money */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <Panel
+          title="Open positions"
+          icon={<Wallet />}
+          className="xl:col-span-2"
+        >
+          <PositionsSummary />
+        </Panel>
+
+        <Panel title="Smart money" icon={<Users />}>
+          <SmartMoneyStrip />
+        </Panel>
+      </div>
+    </div>
   );
 }

@@ -1,0 +1,49 @@
+# ============================================================
+# aats-backup.service — one-shot Redis snapshot backup unit
+# ============================================================
+# PURPOSE
+#   Trigger a point-in-time Redis snapshot backup.
+#   Invoked by aats-backup.timer (daily) or manually:
+#     systemctl start aats-backup
+#
+# INSTALL:
+#   Copy to /etc/systemd/system/aats-backup.service
+#   Then install aats-backup.timer alongside it.
+#   systemctl daemon-reload
+#   systemctl enable --now aats-backup.timer
+#
+# SYNTAX CHECK:
+#   systemd-analyze verify /etc/systemd/system/aats-backup.service
+#
+# RELATED:
+#   deploy/systemd/aats-backup.timer  — timer unit (daily trigger)
+#   scripts/redis-backup.sh            — the backup implementation
+# ============================================================
+
+[Unit]
+Description=AATS Redis snapshot backup (one-shot)
+Documentation=file:///opt/aats/docs/redis-backup-restore.md
+# Only meaningful if the main stack is running.
+Requires=aats.service
+After=aats.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/aats
+EnvironmentFile=-/opt/aats/.env
+
+# BACKUP_DIR can be overridden in .env or via the environment. Default: /var/backups/aats
+Environment=BACKUP_DIR=/var/backups/aats
+Environment=RETENTION_DAYS=14
+
+ExecStart=/bin/bash /opt/aats/scripts/redis-backup.sh
+
+# If the backup fails, emit a journal entry and alert. Do NOT stop the trading stack.
+SuccessExitStatus=0
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aats-backup
+
+[Install]
+# Not installed directly — activated by aats-backup.timer.

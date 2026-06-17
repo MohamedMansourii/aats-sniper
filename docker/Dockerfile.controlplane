@@ -1,0 +1,62 @@
+# AATS — aats-controlplane service Dockerfile
+# Runs the frozen control-plane API server (api-contracts.md, T-341).
+#
+# Key constraints (enforced at the server level, not in this file):
+#   - GET = read-only; POST = de-risk-only; no risk-increase endpoint.
+#   - Money: integer lamports or decimal-string, NEVER float.
+#   - /api/mode LIVE requires DRY_RUN_ENABLED=false AND CEO auth token.
+#   - DRY_RUN_ENABLED=true is the default; this file never overrides it.
+#   - E4: the control plane binds to LOOPBACK (127.0.0.1) by default, never
+#     0.0.0.0. See the CMD note below.
+#
+# No secrets in this file. See .env.example.
+
+FROM python:3.11.9-slim@sha256:7b09a3b7ccb95df60a78c4d2b0e52fc78d4e64fe9a9fddb0f9a0ea50d7cd8d9a AS builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+COPY requirements/requirements.txt /build/requirements.txt
+RUN pip install --no-cache-dir --prefix=/install -r /build/requirements.txt
+
+FROM python:3.11.9-slim@sha256:7b09a3b7ccb95df60a78c4d2b0e52fc78d4e64fe9a9fddb0f9a0ea50d7cd8d9a AS runtime
+
+LABEL org.opencontainers.image.title="aats-controlplane"
+LABEL org.opencontainers.image.description="AATS frozen control-plane API (api-contracts.md)"
+
+WORKDIR /app
+COPY --from=builder /install /usr/local
+COPY aats/ /app/aats/
+COPY pyproject.toml /app/pyproject.toml
+
+RUN adduser --disabled-password --gecos "" --uid 1000 aats
+USER aats
+
+ENV DRY_RUN_ENABLED=true
+ENV PYTHONUNBUFFERED=1
+
+# Control-plane API port (dashboard + Telegram connect here)
+EXPOSE 8787
+
+# Metrics port
+ENV METRICS_PORT=9103
+EXPOSE 9103
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8787/api/health')" || exit 1
+
+# Real server entrypoint wired in T-341; bind hardened in E4.
+#
+# E4 EXPOSURE POLICY: the control plane carries the destructive de-risk/kill
+# surface. It binds to LOOPBACK (127.0.0.1) by DEFAULT, never 0.0.0.0. The
+# module entrypoint (aats/control_plane/app.py:main) resolves the bind host via
+# CONTROL_PLANE_BIND_HOST (default 127.0.0.1) and emits a loud SECURITY warning
+# if a non-loopback bind is ever requested. Remote operators reach the API only
+# through the documented nginx reverse proxy (deploy/nginx/aats-controlplane.conf:
+# TLS + IP allowlist) which proxies to this loopback port. Host-side port
+# exposure is further restricted to 127.0.0.1 via
+# deploy/docker-compose.controlplane-bind.override.yml.
+#
+# We launch via `python -m aats.control_plane.app` (NOT a bare `uvicorn --host
+# 0.0.0.0`) so the loopback default is enforced in one auditable place. To bind
+# elsewhere (only behind the proxy on an isolated net) set CONTROL_PLANE_BIND_HOST.
+CMD ["python", "-m", "aats.control_plane.app"]

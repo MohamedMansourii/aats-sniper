@@ -1,0 +1,56 @@
+[package]
+name = "aats-signer"
+version = "0.1.0"
+edition = "2021"
+description = "AATS minimal-surface signer (ADR-0009, infrastructure.md §5)"
+
+# SECURITY CONTRACT (ADR-0009, infrastructure.md §5.1):
+#   This crate is the ONLY holder of the wallet secret.
+#   It has NO inbound network, NO untrusted-byte decode.
+#   It exposes ONE loopback Unix-domain socket operation:
+#       sign(unsigned_tx_bytes, wallet_id) -> signed_tx_bytes
+#   Socket is file-permission + peer-credential gated.
+#
+# Three independent refusals (infrastructure.md §5.2, implemented in T-251):
+#   1. Per-tx + rolling-aggregate SOL spend cap (0.1 SOL / 0.5 SOL)
+#   2. Full enumerated program-ID allowlist
+#   3. System-program transfer destination pinned to 8 Jito tip accounts
+#
+# Secret handling (infrastructure.md §5.3):
+#   - Wallet secret fetched via Vault short-lived token at boot.
+#   - Held in mlock-able memory; zeroized on process exit.
+#   - NEVER placed in a static env var; .env field is a Vault ref only.
+
+[[bin]]
+name = "aats-signer"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Solana signing primitives
+solana-sdk = "1.18"
+
+# Secret hygiene
+zeroize = { version = "1.7", features = ["derive"] }
+
+# Prometheus metrics (minimal — just heartbeat + sign-count)
+prometheus = "0.13"
+hyper = { version = "1", features = ["http1", "server"] }
+http-body-util = "0.1"
+hyper-util = { version = "0.1", features = ["tokio"] }
+
+# Vault client (short-lived token fetch at boot)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"  # minimize surface area

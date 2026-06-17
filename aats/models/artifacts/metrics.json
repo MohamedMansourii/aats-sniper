@@ -1,0 +1,172 @@
+{
+  "is_bootstrap_not_real": true,
+  "model_version": "snipe-lgbm-v1.0.0-seed20260616-BOOTSTRAP",
+  "seed": 20260616,
+  "corpus_n": 4000,
+  "n_train": 2400,
+  "n_calib": 600,
+  "n_test": 1000,
+  "positive_rate": 0.22375,
+  "leak_audit_summary": "LEAK AUDIT PASS: 4000 rows. For every row: feature_event_time <= decision_event_time (equal by event-time join), AND label resolution_event_time strictly > decision_event_time (label horizon proof present). No feature reads post-decision data; the label is the only forward-looking quantity and it lives in a separate dataset joined by event_time only.",
+  "calib_slice_report": {
+    "method": "isotonic",
+    "brier": 0.13618740320744877,
+    "ece": 3.5897211129546725e-17,
+    "in_tolerance": true
+  },
+  "test_fold_calibration": {
+    "brier": 0.14355613041691448,
+    "ece": 0.04327813616558031,
+    "reliability_bins": [
+      {
+        "bin_lower": 0.0,
+        "bin_upper": 0.1,
+        "count": 301,
+        "mean_predicted": 0.06357936703432275,
+        "empirical_frequency": 0.04983388704318937
+      },
+      {
+        "bin_lower": 0.1,
+        "bin_upper": 0.2,
+        "count": 248,
+        "mean_predicted": 0.1076762807411791,
+        "empirical_frequency": 0.14112903225806453
+      },
+      {
+        "bin_lower": 0.2,
+        "bin_upper": 0.30000000000000004,
+        "count": 219,
+        "mean_predicted": 0.28121046717308107,
+        "empirical_frequency": 0.2511415525114155
+      },
+      {
+        "bin_lower": 0.30000000000000004,
+        "bin_upper": 0.4,
+        "count": 114,
+        "mean_predicted": 0.3100650958114978,
+        "empirical_frequency": 0.42105263157894735
+      },
+      {
+        "bin_lower": 0.4,
+        "bin_upper": 0.5,
+        "count": 1,
+        "mean_predicted": 0.40593429292133704,
+        "empirical_frequency": 0.0
+      },
+      {
+        "bin_lower": 0.5,
+        "bin_upper": 0.6000000000000001,
+        "count": 79,
+        "mean_predicted": 0.5673470105478651,
+        "empirical_frequency": 0.4936708860759494
+      },
+      {
+        "bin_lower": 0.6000000000000001,
+        "bin_upper": 0.7000000000000001,
+        "count": 22,
+        "mean_predicted": 0.6434900776216264,
+        "empirical_frequency": 0.5
+      },
+      {
+        "bin_lower": 0.7000000000000001,
+        "bin_upper": 0.8,
+        "count": 4,
+        "mean_predicted": 0.7312236769478808,
+        "empirical_frequency": 1.0
+      },
+      {
+        "bin_lower": 0.8,
+        "bin_upper": 0.9,
+        "count": 5,
+        "mean_predicted": 0.8574784030499096,
+        "empirical_frequency": 0.8
+      },
+      {
+        "bin_lower": 0.9,
+        "bin_upper": 1.0,
+        "count": 7,
+        "mean_predicted": 0.9801665403330143,
+        "empirical_frequency": 0.8571428571428571
+      }
+    ]
+  },
+  "model_vs_baseline_test": {
+    "model_auc": 0.7699648639581899,
+    "model_pr_auc": 0.4610215682328149,
+    "baseline_auc": 0.5784940351125001,
+    "baseline_pr_auc": 0.25665592089912026,
+    "edge_auc": 0.19147082884568978,
+    "edge_pr_auc": 0.20436564733369467
+  },
+  "rolling_monitor": {
+    "disabled": false,
+    "final_verdict": "ENABLED",
+    "windows": [
+      "MONITOR window n=334: model_AUC=0.7332 baseline_AUC=0.5892 edge=+0.1440 (min_edge=0.02) -> ENABLED",
+      "MONITOR window n=333: model_AUC=0.7549 baseline_AUC=0.5625 edge=+0.1924 (min_edge=0.02) -> ENABLED",
+      "MONITOR window n=333: model_AUC=0.8211 baseline_AUC=0.5810 edge=+0.2402 (min_edge=0.02) -> ENABLED"
+    ]
+  },
+  "onnx_parity_max_abs_diff": 2.759503617832948e-07,
+  "latency_ms": {
+    "p50_ms": 0.06180000491440296,
+    "p99_ms": 0.23230002261698246,
+    "mean_ms": 0.08399600011762232,
+    "n": 3000.0
+  },
+  "feature_columns": [
+    "first_k_buy_pressure",
+    "first_k_volume_lamports",
+    "first_k_buy_count",
+    "first_k_sell_count",
+    "first_k_unique_buyers",
+    "first_k_buy_sell_ratio",
+    "first_k_unique_buyer_velocity",
+    "lp_depth_lamports",
+    "holder_count",
+    "holder_concentration_top10_bps",
+    "sniper_cluster_score",
+    "sell_tax_bps",
+    "rsi",
+    "rsi_present",
+    "macd",
+    "macd_present",
+    "bb_width",
+    "bb_width_present",
+    "smart_wallets_in",
+    "smart_wallet_entry_lag_slots",
+    "smart_wallet_entry_lag_present",
+    "tip_floor_at_decision_lamports",
+    "tip_contention_low",
+    "tip_contention_medium",
+    "tip_contention_high"
+  ],
+  "monotone_constraints": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    -1,
+    0,
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    -1,
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "auto_disable_min_edge_auc": 0.02
+}

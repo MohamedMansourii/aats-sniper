@@ -1,0 +1,112 @@
+# ============================================================
+# aats.service — systemd unit for the AATS docker compose stack
+# ============================================================
+# PURPOSE
+#   Bring the full AATS stack up on boot as a systemd service.
+#   This is an ALTERNATIVE to running `docker compose up` by hand.
+#   It does NOT replace docker-compose.yml — it wraps it.
+#
+# SAFETY CONTRACT (infrastructure.md §2)
+#   DRY_RUN_ENABLED defaults to "true" in docker-compose.yml.
+#   Real capital is DISABLED by default. No env override here
+#   sets DRY_RUN_ENABLED=false. That gate remains with the operator
+#   who must explicitly set it AND present a CEO auth token.
+#
+# INSTALL (run as root on the deploy Linux host):
+#   1. Copy this file to /etc/systemd/system/aats.service
+#   2. Edit the WorkingDirectory and EnvironmentFile paths if needed.
+#   3. systemctl daemon-reload
+#   4. systemctl enable aats      # start on boot
+#   5. systemctl start aats       # start now
+#   6. systemctl status aats      # verify
+#
+# UNINSTALL:
+#   systemctl stop aats && systemctl disable aats
+#   rm /etc/systemd/system/aats.service && systemctl daemon-reload
+#
+# SYNTAX CHECK (on Linux with systemd):
+#   systemd-analyze verify /etc/systemd/system/aats.service
+#   (or: systemd-analyze verify aats.service from the install path)
+#
+# RELATED FILES:
+#   deploy/systemd/aats-backup.service   — one-shot Redis backup
+#   deploy/systemd/aats-backup.timer     — daily backup schedule
+#   deploy/systemd/aats-dms-watchdog.service — standalone DMS watchdog alert
+#   scripts/startup-self-check.sh        — pre-start self-check gate
+#   scripts/redis-backup.sh              — Redis snapshot backup script
+# ============================================================
+
+[Unit]
+Description=AATS Solana Meme-Coin Ultra-Sniper (docker compose stack)
+Documentation=file:///opt/aats/docs/deploy-ops-guide.md
+# Require the Docker socket before starting.
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+# Restart the compose stack if it exits unexpectedly.
+# The DMS (aats-dms) is a separate compose service and will survive a hotcore
+# crash within Docker. If the entire compose stack crashes, this unit restarts it.
+
+[Service]
+Type=oneshot
+# Run a startup self-check before bringing up the compose stack.
+# If the self-check fails, the stack will NOT start. This is the shell-level
+# DRY-RUN gate (scripts/startup-self-check.sh §1 — the most important check).
+RemainAfterExit=yes
+
+# DIRECTORY: set this to the checked-out repo root on the deploy host.
+WorkingDirectory=/opt/aats
+
+# ENVIRONMENT FILE: the operator's .env is injected here.
+# It MUST NOT contain raw key material — only Vault references (infrastructure.md §9).
+# The file is created by the operator from .env.example; it is NOT committed.
+EnvironmentFile=-/opt/aats/.env
+
+# SAFETY: do not pass DRY_RUN_ENABLED=false from this unit ever.
+# The operator must set it EXPLICITLY in .env after completing the pre-live checklist.
+# Absent = the docker-compose.yml default of "true" applies.
+Environment=COMPOSE_PROJECT_NAME=aats
+
+# Pre-start gate: the self-check script exits 1 on any hard failure,
+# preventing compose up from running.
+ExecStartPre=/bin/bash /opt/aats/scripts/startup-self-check.sh
+
+# Start the full compose stack (detached). All 11 services come up in dependency order.
+ExecStart=/usr/bin/docker compose \
+    --project-directory /opt/aats \
+    --env-file /opt/aats/.env \
+    up --detach --remove-orphans
+
+# Stop: bring the stack down but preserve named volumes (state + metrics).
+# To wipe volumes: docker compose down -v (MANUAL operator action).
+ExecStop=/usr/bin/docker compose \
+    --project-directory /opt/aats \
+    down --timeout 30
+
+# Reload: rolling restart of the compose stack (e.g. after a config change).
+ExecReload=/usr/bin/docker compose \
+    --project-directory /opt/aats \
+    up --detach --remove-orphans
+
+# Restart policy: restart the service on failure, with a backoff.
+Restart=on-failure
+RestartSec=10s
+
+# Resource limits — prevent runaway memory consumption on the host.
+# The compose stack itself constrains per-service resources. This is a host-level guard.
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+
+# Security hardening (systemd hardening directives).
+# NOTE: NoNewPrivileges conflicts with Docker's capability grants; omit for docker services.
+PrivateTmp=false
+
+# Logging: journal captures stdout/stderr from the compose invocation itself.
+# Per-service logs come from docker (use `docker compose logs` or `journalctl -u aats`).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aats
+
+[Install]
+WantedBy=multi-user.target

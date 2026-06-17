@@ -1,0 +1,61 @@
+# AATS — aats-slow service Dockerfile
+# Runs the Python SLOW loop (feature assembly, model inference, MCS, LLM veto).
+# NOT the hot path — Rust hot core has its own image.
+#
+# DRY-RUN HARD DEFAULT: DRY_RUN_ENABLED is set to "true" here.
+# It can only be overridden to "false" by an explicit operator env-var AND
+# CEO auth token presented to POST /api/mode (api-contracts.md §5, AC-060).
+# The override is never done in this Dockerfile.
+#
+# No secrets in this file. See .env.example for the environment schema.
+# Real values are injected at runtime by the operator.
+
+# ── Stage 1: build ─────────────────────────────────────────────────────────
+FROM python:3.11.9-slim@sha256:7b09a3b7ccb95df60a78c4d2b0e52fc78d4e64fe9a9fddb0f9a0ea50d7cd8d9a AS builder
+
+WORKDIR /build
+
+# Install only what's needed to compile wheels
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements/requirements.txt /build/requirements.txt
+RUN pip install --no-cache-dir --prefix=/install -r /build/requirements.txt
+
+# ── Stage 2: runtime (slim — no build tools) ───────────────────────────────
+FROM python:3.11.9-slim@sha256:7b09a3b7ccb95df60a78c4d2b0e52fc78d4e64fe9a9fddb0f9a0ea50d7cd8d9a AS runtime
+
+LABEL org.opencontainers.image.title="aats-slow"
+LABEL org.opencontainers.image.description="AATS SLOW loop — Python (NOT the hot path)"
+LABEL org.opencontainers.image.vendor="AATS"
+
+WORKDIR /app
+
+# Copy installed packages from builder
+COPY --from=builder /install /usr/local
+
+# Copy the Python package
+COPY aats/ /app/aats/
+COPY sol-sniper/ /app/sol-sniper/
+COPY pyproject.toml /app/pyproject.toml
+
+# Non-root user
+RUN adduser --disabled-password --gecos "" --uid 1000 aats
+USER aats
+
+# DRY-RUN is the hard default — never disabled in this image
+ENV DRY_RUN_ENABLED=true
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Metrics port (scraped by Prometheus)
+ENV METRICS_PORT=9101
+EXPOSE 9101
+
+# Healthcheck via the metrics endpoint
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9101/health')" || exit 1
+
+# Placeholder entrypoint — real slow-loop process wired in T-340
+CMD ["python", "-m", "aats.controller"]

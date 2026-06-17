@@ -19,26 +19,10 @@ import {
   RadialBarChart,
   ResponsiveContainer,
 } from "recharts";
-import Layout from "@/components/Layout";
 import { Chip, LiveDot, Panel, StatTile } from "@/components/kit";
 import { useSentiment } from "@/lib/api";
 import type { MCSScore } from "@/lib/types";
-
-/* -------------------------------------------------------------------------- */
-/*  Palette — recharts paints on canvas and cannot read CSS vars, so colors    */
-/*  are hardcoded to match src/index.css. Keep in sync with the theme.         */
-/* -------------------------------------------------------------------------- */
-
-const HEX = {
-  up: "#22e39a",
-  down: "#ff5d5d",
-  warn: "#ffb020",
-  info: "#4aa3ff",
-  violet: "#8b7bff",
-  faint: "#646e7e",
-  border: "#1e242c",
-  panel2: "#171b21",
-} as const;
+import { CHART as HEX } from "@/lib/chart-colors";
 
 /* -------------------------------------------------------------------------- */
 /*  MCS model                                                                  */
@@ -76,7 +60,7 @@ function deriveMCS(s: MCSScore): DerivedMCS {
   const flagPenalty = Math.min(0.6, s.redFlags.length * 0.22);
 
   // Map organic 0..1 onto −1..1, then subtract the manufactured-hype penalties.
-  const raw = (organic * 2 - 1) - syncPenalty - flagPenalty;
+  const raw = organic * 2 - 1 - syncPenalty - flagPenalty;
   const mcs = Math.max(-1, Math.min(1, raw));
 
   return {
@@ -86,7 +70,10 @@ function deriveMCS(s: MCSScore): DerivedMCS {
   };
 }
 
-function mcsVerdict(mcs: number): { label: string; tone: "ok" | "warn" | "danger" | "neutral" } {
+function mcsVerdict(mcs: number): {
+  label: string;
+  tone: "ok" | "warn" | "danger" | "neutral";
+} {
   if (mcs >= 0.4) return { label: "Conviction", tone: "ok" };
   if (mcs >= 0.1) return { label: "Lean long", tone: "neutral" };
   if (mcs > -0.1) return { label: "Neutral", tone: "neutral" };
@@ -221,7 +208,7 @@ function OriginSplit({ score }: { score: MCSScore }) {
   const botFlag = score.redFlags.includes("bot_cluster");
   const inorganic = Math.min(
     0.92,
-    Math.max(0.04, score.synchronicity * 0.7 + (botFlag ? 0.25 : 0)),
+    Math.max(0.04, score.synchronicity * 0.7 + (botFlag ? 0.25 : 0))
   );
   const organic = 1 - inorganic;
   const data = [
@@ -244,7 +231,7 @@ function OriginSplit({ score }: { score: MCSScore }) {
               stroke="none"
               isAnimationActive={false}
             >
-              {data.map((d) => (
+              {data.map(d => (
                 <Cell key={d.name} fill={d.color} />
               ))}
             </Pie>
@@ -254,11 +241,13 @@ function OriginSplit({ score }: { score: MCSScore }) {
           <span className="num text-[14px] font-semibold leading-none text-down">
             {pct0(inorganic)}%
           </span>
-          <span className="text-[9px] uppercase tracking-wide text-faint">coord</span>
+          <span className="text-[9px] uppercase tracking-wide text-faint">
+            coord
+          </span>
         </div>
       </div>
       <div className="space-y-1.5">
-        {data.map((d) => (
+        {data.map(d => (
           <div key={d.name} className="flex items-center gap-2">
             <span
               className="h-2 w-2 rounded-[2px]"
@@ -302,10 +291,14 @@ function AssetCard({ score }: { score: MCSScore }) {
           </div>
         </div>
         <div className="shrink-0 text-right">
-          <div className="text-[10px] uppercase tracking-wide text-faint">MCS</div>
+          <div className="text-[10px] uppercase tracking-wide text-faint">
+            MCS
+          </div>
           <div
             className="num text-[26px] font-semibold leading-none"
-            style={{ color: mcs >= 0.1 ? HEX.up : mcs <= -0.1 ? HEX.down : HEX.faint }}
+            style={{
+              color: mcs >= 0.1 ? HEX.up : mcs <= -0.1 ? HEX.down : HEX.faint,
+            }}
           >
             {mcs > 0 ? "+" : ""}
             {mcs.toFixed(2)}
@@ -322,8 +315,9 @@ function AssetCard({ score }: { score: MCSScore }) {
           <div className="flex items-start gap-2 rounded-md border border-[color:color-mix(in_srgb,var(--danger)_28%,transparent)] bg-[color:color-mix(in_srgb,var(--danger)_10%,transparent)] px-2.5 py-2">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" />
             <p className="text-[11px] leading-snug text-down">
-              High synchronicity ({pct0(score.synchronicity)}%) reads as a coordinated
-              shill — manufactured hype, treated as a contrarian risk, not a buy.
+              High synchronicity ({pct0(score.synchronicity)}%) reads as a
+              coordinated shill — manufactured hype, treated as a contrarian
+              risk, not a buy.
             </p>
           </div>
         )}
@@ -331,7 +325,11 @@ function AssetCard({ score }: { score: MCSScore }) {
         {/* Sub-bars + synchronicity meter */}
         <div className="grid grid-cols-[1fr_auto] gap-4">
           <div className="space-y-2.5">
-            <SubBar label="Conviction" value={score.conviction} color={HEX.up} />
+            <SubBar
+              label="Conviction"
+              value={score.conviction}
+              color={HEX.up}
+            />
             <SubBar label="Momentum" value={score.momentum} color={HEX.info} />
             <SubBar label="Novelty" value={score.novelty} color={HEX.violet} />
           </div>
@@ -362,7 +360,7 @@ function AssetCard({ score }: { score: MCSScore }) {
           </div>
           {hasFlags ? (
             <div className="flex flex-wrap gap-1.5">
-              {score.redFlags.map((flag) => (
+              {score.redFlags.map(flag => (
                 <Chip key={flag} tone="danger" icon={<AlertTriangle />}>
                   {flagLabel(flag)}
                 </Chip>
@@ -414,15 +412,17 @@ function CardSkeleton() {
 
 export default function Sentiment() {
   const { data, loading, error } = useSentiment();
-  const scores = data ?? [];
+  // Stable reference so the summary memo doesn't recompute every render when
+  // `data` is null (a fresh `[]` literal would change identity each time).
+  const scores = useMemo(() => data ?? [], [data]);
 
   // Roll up the watchlist for the header strip.
   const summary = useMemo(() => {
     if (scores.length === 0) return null;
     const derived = scores.map(deriveMCS);
     const avg = derived.reduce((a, d) => a + d.mcs, 0) / derived.length;
-    const manufactured = derived.filter((d) => d.manufactured).length;
-    const flagged = scores.filter((s) => s.redFlags.length > 0).length;
+    const manufactured = derived.filter(d => d.manufactured).length;
+    const flagged = scores.filter(s => s.redFlags.length > 0).length;
     const posts = scores.reduce((a, s) => a + s.postCount, 0);
     return {
       avg: round2(avg),
@@ -433,117 +433,130 @@ export default function Sentiment() {
   }, [scores]);
 
   return (
-    <Layout>
-      <div className="space-y-4">
-        {/* Page heading */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="flex items-center gap-2 text-[16px] font-semibold tracking-tight text-text">
-              <Megaphone className="h-4 w-4 text-brand" />
-              Market conviction score
-            </h1>
-            <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <LiveDot tone="warn" />
-              Slow-loop signal — refreshed on the 2s narrative cadence, not the snipe loop.
-            </p>
-          </div>
-          <Chip tone="violet" icon={<Sparkles />}>
-            Narrative engine
-          </Chip>
+    <div className="space-y-4">
+      {/* Page heading */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="flex items-center gap-2 text-[16px] font-semibold tracking-tight text-text">
+            <Megaphone className="h-4 w-4 text-brand" />
+            Market conviction score
+          </h1>
+          <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <LiveDot tone="warn" />
+            Slow-loop signal — refreshed on the 2s narrative cadence, not the
+            snipe loop.
+          </p>
         </div>
+        <Chip tone="violet" icon={<Sparkles />}>
+          Narrative engine
+        </Chip>
+      </div>
 
-        {/* Summary strip */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <StatTile
-            label="Watched assets"
-            value={loading && scores.length === 0 ? "—" : scores.length}
-            sub="on the conviction board"
-          />
-          <StatTile
-            label="Mean MCS"
-            value={
-              summary ? `${summary.avg > 0 ? "+" : ""}${summary.avg.toFixed(2)}` : "—"
-            }
-            sub="−1.0 contrarian · +1.0 conviction"
-            tone={summary ? (summary.avg >= 0.1 ? "up" : summary.avg <= -0.1 ? "down" : "neutral") : "neutral"}
-          />
-          <StatTile
-            label="Manufactured hype"
-            value={summary ? summary.manufactured : "—"}
-            sub="coordinated-shill flags"
-            tone={summary && summary.manufactured > 0 ? "danger" : "neutral"}
-          />
-          <StatTile
-            label="Posts analysed"
-            value={summary ? summary.posts.toLocaleString("en-US") : "—"}
-            sub={summary ? `${summary.flagged} asset(s) with red flags` : "across the watchlist"}
-            tone="info"
-          />
+      {/* Summary strip */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatTile
+          label="Watched assets"
+          value={loading && scores.length === 0 ? "—" : scores.length}
+          sub="on the conviction board"
+        />
+        <StatTile
+          label="Mean MCS"
+          value={
+            summary
+              ? `${summary.avg > 0 ? "+" : ""}${summary.avg.toFixed(2)}`
+              : "—"
+          }
+          sub="−1.0 contrarian · +1.0 conviction"
+          tone={
+            summary
+              ? summary.avg >= 0.1
+                ? "up"
+                : summary.avg <= -0.1
+                  ? "down"
+                  : "neutral"
+              : "neutral"
+          }
+        />
+        <StatTile
+          label="Manufactured hype"
+          value={summary ? summary.manufactured : "—"}
+          sub="coordinated-shill flags"
+          tone={summary && summary.manufactured > 0 ? "danger" : "neutral"}
+        />
+        <StatTile
+          label="Posts analysed"
+          value={summary ? summary.posts.toLocaleString("en-US") : "—"}
+          sub={
+            summary
+              ? `${summary.flagged} asset(s) with red flags`
+              : "across the watchlist"
+          }
+          tone="info"
+        />
+      </div>
+
+      {/* How synchronicity is read — make the contrarian framing explicit */}
+      <Panel className="overflow-hidden">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-3.5 py-2.5 text-[11px]">
+          <span className="flex items-center gap-1.5 text-faint">
+            <Flame className="h-3 w-3 text-brand" />
+            How MCS reads the room
+          </span>
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <TrendingUp className="h-3 w-3 text-up" />
+            Conviction · momentum · novelty drive the score up
+          </span>
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <Bot className="h-3 w-3 text-down" />
+            High synchronicity = coordinated shill → drives it{" "}
+            <span className="font-medium text-down">down</span> (contrarian)
+          </span>
         </div>
+      </Panel>
 
-        {/* How synchronicity is read — make the contrarian framing explicit */}
+      {/* Error state */}
+      {error && (
         <Panel className="overflow-hidden">
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-3.5 py-2.5 text-[11px]">
-            <span className="flex items-center gap-1.5 text-faint">
-              <Flame className="h-3 w-3 text-brand" />
-              How MCS reads the room
-            </span>
-            <span className="flex items-center gap-1.5 text-muted-foreground">
-              <TrendingUp className="h-3 w-3 text-up" />
-              Conviction · momentum · novelty drive the score up
-            </span>
-            <span className="flex items-center gap-1.5 text-muted-foreground">
-              <Bot className="h-3 w-3 text-down" />
-              High synchronicity = coordinated shill → drives it{" "}
-              <span className="font-medium text-down">down</span> (contrarian)
-            </span>
+          <div className="flex items-center gap-2 px-3.5 py-6 text-[12px] text-down">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            Failed to load sentiment: {error}
           </div>
         </Panel>
+      )}
 
-        {/* Error state */}
-        {error && (
-          <Panel className="overflow-hidden">
-            <div className="flex items-center gap-2 px-3.5 py-6 text-[12px] text-down">
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              Failed to load sentiment: {error}
-            </div>
-          </Panel>
-        )}
+      {/* Loading skeletons */}
+      {loading && scores.length === 0 && !error && (
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <CardSkeleton />
+          <CardSkeleton />
+          <CardSkeleton />
+          <CardSkeleton />
+        </div>
+      )}
 
-        {/* Loading skeletons */}
-        {loading && scores.length === 0 && !error && (
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <CardSkeleton />
-            <CardSkeleton />
-            <CardSkeleton />
-            <CardSkeleton />
+      {/* Empty state */}
+      {!loading && !error && scores.length === 0 && (
+        <Panel className="overflow-hidden">
+          <div className="flex flex-col items-center gap-2 px-3.5 py-12 text-center">
+            <MessageSquareText className="h-6 w-6 text-faint" />
+            <p className="text-[12px] text-muted-foreground">
+              No assets on the conviction board.
+            </p>
+            <p className="text-[11px] text-faint">
+              The narrative engine has nothing to score yet.
+            </p>
           </div>
-        )}
+        </Panel>
+      )}
 
-        {/* Empty state */}
-        {!loading && !error && scores.length === 0 && (
-          <Panel className="overflow-hidden">
-            <div className="flex flex-col items-center gap-2 px-3.5 py-12 text-center">
-              <MessageSquareText className="h-6 w-6 text-faint" />
-              <p className="text-[12px] text-muted-foreground">
-                No assets on the conviction board.
-              </p>
-              <p className="text-[11px] text-faint">
-                The narrative engine has nothing to score yet.
-              </p>
-            </div>
-          </Panel>
-        )}
-
-        {/* Asset cards */}
-        {scores.length > 0 && (
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            {scores.map((score) => (
-              <AssetCard key={score.asset} score={score} />
-            ))}
-          </div>
-        )}
-      </div>
-    </Layout>
+      {/* Asset cards */}
+      {scores.length > 0 && (
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {scores.map(score => (
+            <AssetCard key={score.asset} score={score} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

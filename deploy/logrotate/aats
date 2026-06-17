@@ -1,0 +1,97 @@
+# ============================================================
+# AATS logrotate configuration
+# ============================================================
+# INSTALL:
+#   sudo cp deploy/logrotate/aats /etc/logrotate.d/aats
+#   logrotate --debug /etc/logrotate.d/aats   (dry-run verify)
+#
+# PURPOSE:
+#   Rotate the decision log (structlog append-only JSON lines),
+#   docker compose stdout captures, and the startup self-check log.
+#
+# NOTES:
+#   - The decision log is the forensic record QA replays. Rotation
+#     sends a SIGUSR1 to the logging process which must re-open the
+#     file descriptor. The compose log driver does not re-open on
+#     SIGUSR1, so docker-json-log rotation is handled separately
+#     below by the notifempty + nocreate approach (the container
+#     re-opens on restart).
+#   - Docker's built-in log rotation (--log-opt max-size / max-file)
+#     is the PRIMARY mechanism for container logs. This logrotate
+#     config covers host-side files: the structlog decision log
+#     exported out of the container via a volume mount, and any
+#     host-side operational logs.
+#   - All rotation is READ-ONLY from the trading-logic perspective.
+#     No rotation step stops, starts, or modifies any trading service.
+# ============================================================
+
+# ── Decision log (structlog JSON lines, exported via volume mount) ──────────
+# Mount the decision log volume at /var/log/aats/decisions on the host.
+# In docker-compose.yml add: volumes: - /var/log/aats/decisions:/app/logs
+# The structlog writer opens the file by name, so postrotate can signal it
+# to re-open (or the container can be sent SIGHUP without stopping it).
+/var/log/aats/decisions/*.jsonl {
+    daily
+    rotate 90
+    compress
+    delaycompress
+    missingok
+    notifempty
+    # Each rotated file is stamped with the date for forensic traceability.
+    dateext
+    dateformat -%Y%m%d
+    # Append suffix so decision logs accumulate as .jsonl.YYYYMMDD.gz.
+    extension .jsonl
+    # After rotation, signal the container to reopen the log file.
+    # aats-slow exports the decision log; send SIGHUP to get it to reopen.
+    # Adjust the container name if the compose project name differs.
+    postrotate
+        docker kill --signal=SIGHUP aats-aats-slow-1 2>/dev/null || true
+    endscript
+}
+
+# ── Startup self-check log (if the operator redirects output to a file) ─────
+# Example redirect: bash scripts/startup-self-check.sh >> /var/log/aats/startup.log 2>&1
+/var/log/aats/startup.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    # No postrotate needed — next invocation of the script creates a new file.
+}
+
+# ── Backup script log ────────────────────────────────────────────────────────
+# redis-backup.sh appends to this file if BACKUP_LOG is set.
+/var/log/aats/backup.log {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+}
+
+# ── Container stdout/stderr captured by journald ─────────────────────────────
+# Docker's --log-driver=journald or --log-driver=json-file handles container
+# log rotation. For json-file (default), configure per-service in compose:
+#   logging:
+#     driver: json-file
+#     options:
+#       max-size: "50m"
+#       max-file: "5"
+# This is recommended to add to docker-compose.yml per service (operator task).
+# The logrotate stanza below is a backstop for any host-side docker log files
+# if the compose project writes them to /var/lib/docker/containers/*.
+# (journald users: ignore this stanza — journald has its own rotation.)
+/var/lib/docker/containers/*/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    # Do NOT send signals to running containers — Docker manages file handles.
+    copytruncate
+}

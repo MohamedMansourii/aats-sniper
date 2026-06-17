@@ -15,13 +15,7 @@ import {
   Sparkles,
   TriangleAlert,
 } from "lucide-react";
-import {
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-} from "recharts";
-import Layout from "@/components/Layout";
+import { Cell, Pie, PieChart, ResponsiveContainer } from "recharts";
 import {
   Chip,
   Gauge,
@@ -33,25 +27,7 @@ import {
 import { usePredictions, useReasoning, useSentiment } from "@/lib/api";
 import { roundInt } from "@/lib/mock";
 import type { MCSScore, Reasoning } from "@/lib/types";
-
-/* -------------------------------------------------------------------------- */
-/*  Palette — recharts paints on canvas and cannot read CSS vars, so colors   */
-/*  are hardcoded to match src/index.css. Keep in sync with the theme.        */
-/* -------------------------------------------------------------------------- */
-
-const HEX = {
-  panel2: "#171b21",
-  border: "#1e242c",
-  text: "#e8edf4",
-  muted: "#9aa4b2",
-  faint: "#646e7e",
-  accent: "#22e39a",
-  up: "#22e39a",
-  down: "#ff5d5d",
-  warn: "#ffb020",
-  info: "#4aa3ff",
-  violet: "#8b7bff",
-} as const;
+import { CHART as HEX } from "@/lib/chart-colors";
 
 /* -------------------------------------------------------------------------- */
 /*  Signal model                                                              */
@@ -204,7 +180,7 @@ function deriveRouterStatus(log: Reasoning[]): RouterStatus {
   }
   // Ambiguous (Hold band) or flagged rows escalate to the frontier model.
   const frontier = log.filter(
-    (r) => r.veto || r.narrativeFailure || r.signal === "Hold",
+    r => r.veto || r.narrativeFailure || r.signal === "Hold"
   ).length;
   const local = total - frontier;
   const localPct = roundInt((local / total) * 100);
@@ -298,7 +274,9 @@ function VerdictRow({ r }: { r: Reasoning }) {
               eff.deRisked ? "h-3 w-3 text-warn" : "h-3 w-3 text-faint"
             }
           />
-          <span className={eff.deRisked ? "text-warn" : "text-muted-foreground"}>
+          <span
+            className={eff.deRisked ? "text-warn" : "text-muted-foreground"}
+          >
             {eff.label}
           </span>
         </span>
@@ -363,7 +341,11 @@ function AgreementExplainer({
   const agreement = agreementOf(quant, mcs);
   const meta = AGREEMENT_META[agreement];
   const donut = [
-    { name: "agree", value: agreement === "aligned" ? 100 : agreement === "divergent" ? 50 : 12 },
+    {
+      name: "agree",
+      value:
+        agreement === "aligned" ? 100 : agreement === "divergent" ? 50 : 12,
+    },
   ];
   const donutColor =
     agreement === "aligned"
@@ -440,8 +422,8 @@ function AgreementExplainer({
         <div className="flex items-start gap-2 rounded-md border border-[color:color-mix(in_srgb,var(--warn)_28%,transparent)] bg-[color:color-mix(in_srgb,var(--warn)_10%,transparent)] px-2.5 py-2">
           <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" />
           <p className="text-[11px] leading-snug text-warn">
-            On disagreement the reasoner resolves toward the safer side only — it
-            can size down or exit, never up.
+            On disagreement the reasoner resolves toward the safer side only —
+            it can size down or exit, never up.
           </p>
         </div>
       )}
@@ -455,7 +437,11 @@ function AgreementExplainer({
 
 function RouterStatusPanel({ status }: { status: RouterStatus }) {
   const parseTone: ChipTone =
-    status.parseFailPct <= 1 ? "ok" : status.parseFailPct <= 3 ? "warn" : "danger";
+    status.parseFailPct <= 1
+      ? "ok"
+      : status.parseFailPct <= 3
+        ? "warn"
+        : "danger";
   const cacheTone: ChipTone = status.cacheHitPct >= 70 ? "ok" : "warn";
 
   return (
@@ -565,16 +551,17 @@ export default function Reasoning() {
   const { data: pred } = usePredictions();
   const { data: sentiment } = useSentiment();
 
-  const log = data ?? [];
+  // Stable reference so the memos below don't recompute every render when
+  // `data` is null (a fresh `[]` literal would change identity each time).
+  const log = useMemo(() => data ?? [], [data]);
 
   // Roll-ups for the KPI strip.
   const summary = useMemo(() => {
     if (log.length === 0) return null;
-    const vetoes = log.filter((r) => r.veto).length;
-    const narrativeFails = log.filter((r) => r.narrativeFailure).length;
-    const deRisked = log.filter((r) => effectiveAction(r).deRisked).length;
-    const avgConf =
-      log.reduce((a, r) => a + r.confidence, 0) / log.length;
+    const vetoes = log.filter(r => r.veto).length;
+    const narrativeFails = log.filter(r => r.narrativeFailure).length;
+    const deRisked = log.filter(r => effectiveAction(r).deRisked).length;
+    const avgConf = log.reduce((a, r) => a + r.confidence, 0) / log.length;
     return {
       count: log.length,
       vetoes,
@@ -588,202 +575,207 @@ export default function Reasoning() {
 
   // Quant vs MCS legs for the agreement explainer. Quant comes from the live
   // classifier probability; MCS is averaged over the watchlist conviction.
-  const quantStanceVal: Stance | null = pred ? quantStance(pred.classifierP) : null;
+  const quantStanceVal: Stance | null = pred
+    ? quantStance(pred.classifierP)
+    : null;
   const mcsStanceVal: Stance | null = useMemo(() => {
     if (!sentiment || sentiment.length === 0) return null;
     const counts: Record<Stance, number> = { long: 0, neutral: 0, short: 0 };
-    sentiment.forEach((m) => {
+    sentiment.forEach(m => {
       counts[mcsStance(m)] += 1;
     });
     // Most common stance across the watchlist.
     let best: Stance = "neutral";
-    (Object.keys(counts) as Stance[]).forEach((k) => {
+    (Object.keys(counts) as Stance[]).forEach(k => {
       if (counts[k] > counts[best]) best = k;
     });
     return best;
   }, [sentiment]);
 
   return (
-    <Layout>
-      <div className="space-y-4">
-        {/* ---- Page header ---- */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-7 w-7 items-center justify-center rounded-md border border-[color:color-mix(in_srgb,var(--violet)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--violet)_12%,transparent)] text-violet">
-              <Sparkles className="h-4 w-4" />
-            </span>
-            <div className="leading-tight">
-              <h1 className="text-[15px] font-semibold tracking-tight text-text">
-                Reasoning log
-              </h1>
-              <p className="text-[11px] text-muted-foreground">
-                LLM reasoner verdicts, agreement resolution and router status
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Chip tone="violet" icon={<Brain />}>
-              Reasoner v2
-            </Chip>
-            <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <LiveDot tone="warn" />
-              Slow loop · 2s
-            </span>
+    <div className="space-y-4">
+      {/* ---- Page header ---- */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md border border-[color:color-mix(in_srgb,var(--violet)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--violet)_12%,transparent)] text-violet">
+            <Sparkles className="h-4 w-4" />
+          </span>
+          <div className="leading-tight">
+            <h1 className="text-[15px] font-semibold tracking-tight text-text">
+              Reasoning log
+            </h1>
+            <p className="text-[11px] text-muted-foreground">
+              LLM reasoner verdicts, agreement resolution and router status
+            </p>
           </div>
         </div>
 
-        {/* ---- Asymmetric-trust rule — the headline contract ---- */}
-        <div className="flex items-start gap-2.5 rounded-[10px] border border-[color:color-mix(in_srgb,var(--violet)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--violet)_10%,transparent)] px-3.5 py-2.5">
-          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-violet" />
-          <div className="text-[12px] leading-relaxed text-text">
-            <span className="font-semibold text-violet">
-              Asymmetric trust:
-            </span>{" "}
-            the LLM reasoner can only ever{" "}
-            <span className="font-semibold text-up">reduce risk</span>. A veto or
-            a narrative-failure flag de-risks the trade — sizes it down, holds it
-            back, or exits. The reasoner{" "}
-            <span className="font-semibold text-danger">never</span> escalates a
-            position, overrides a quant veto, or opens a trade the gate and
-            classifier did not already permit.
-          </div>
+        <div className="flex items-center gap-2">
+          <Chip tone="violet" icon={<Brain />}>
+            Reasoner v2
+          </Chip>
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <LiveDot tone="warn" />
+            Slow loop · 2s
+          </span>
         </div>
+      </div>
 
-        {/* ---- KPI strip ---- */}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatTile
-            label="Verdicts logged"
-            value={loading && log.length === 0 ? "—" : summary?.count ?? 0}
-            sub="in the current window"
-          />
-          <StatTile
-            label="De-risk actions"
-            value={summary ? summary.deRisked : "—"}
-            sub="vetoes + narrative pullbacks"
-            tone={summary && summary.deRisked > 0 ? "warn" : "neutral"}
-          />
-          <StatTile
-            label="Hard vetoes"
-            value={summary ? summary.vetoes : "—"}
-            sub="entry blocked outright"
-            tone={summary && summary.vetoes > 0 ? "danger" : "neutral"}
-          />
-          <StatTile
-            label="Mean confidence"
-            value={summary ? `${summary.avgConfPct}%` : "—"}
-            sub="across logged verdicts"
-            tone="info"
-          />
+      {/* ---- Asymmetric-trust rule — the headline contract ---- */}
+      <div className="flex items-start gap-2.5 rounded-[10px] border border-[color:color-mix(in_srgb,var(--violet)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--violet)_10%,transparent)] px-3.5 py-2.5">
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-violet" />
+        <div className="text-[12px] leading-relaxed text-text">
+          <span className="font-semibold text-violet">Asymmetric trust:</span>{" "}
+          the LLM reasoner can only ever{" "}
+          <span className="font-semibold text-up">reduce risk</span>. A veto or
+          a narrative-failure flag de-risks the trade — sizes it down, holds it
+          back, or exits. The reasoner{" "}
+          <span className="font-semibold text-danger">never</span> escalates a
+          position, overrides a quant veto, or opens a trade the gate and
+          classifier did not already permit.
         </div>
+      </div>
 
-        {/* ---- Agreement explainer + router status ---- */}
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <Panel
-            title="Agreement — quant vs narrative"
-            icon={<GitMerge />}
-            actions={
-              quantStanceVal && mcsStanceVal ? (
-                <Chip tone={AGREEMENT_META[agreementOf(quantStanceVal, mcsStanceVal)].tone}>
-                  {AGREEMENT_META[agreementOf(quantStanceVal, mcsStanceVal)].label}
-                </Chip>
-              ) : undefined
-            }
-          >
-            <AgreementExplainer quant={quantStanceVal} mcs={mcsStanceVal} />
-          </Panel>
+      {/* ---- KPI strip ---- */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile
+          label="Verdicts logged"
+          value={loading && log.length === 0 ? "—" : (summary?.count ?? 0)}
+          sub="in the current window"
+        />
+        <StatTile
+          label="De-risk actions"
+          value={summary ? summary.deRisked : "—"}
+          sub="vetoes + narrative pullbacks"
+          tone={summary && summary.deRisked > 0 ? "warn" : "neutral"}
+        />
+        <StatTile
+          label="Hard vetoes"
+          value={summary ? summary.vetoes : "—"}
+          sub="entry blocked outright"
+          tone={summary && summary.vetoes > 0 ? "danger" : "neutral"}
+        />
+        <StatTile
+          label="Mean confidence"
+          value={summary ? `${summary.avgConfPct}%` : "—"}
+          sub="across logged verdicts"
+          tone="info"
+        />
+      </div>
 
-          <Panel
-            title="Router status"
-            icon={<Network />}
-            actions={
-              <span className="num text-[11px] text-faint">
-                {router.total} calls
-              </span>
-            }
-          >
-            {error ? (
-              <ErrorBlock message={error} />
-            ) : loading && log.length === 0 ? (
-              <div className="flex h-[180px] items-center justify-center text-[11px] text-faint">
-                <span className="animate-pulse">reading router telemetry…</span>
-              </div>
-            ) : (
-              <RouterStatusPanel status={router} />
-            )}
-          </Panel>
-        </div>
-
-        {/* ---- Verdict feed ---- */}
+      {/* ---- Agreement explainer + router status ---- */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <Panel
-          title="Reasoner verdict log"
-          icon={<MessageSquareQuote />}
+          title="Agreement — quant vs narrative"
+          icon={<GitMerge />}
           actions={
-            <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <LiveDot tone="warn" />
-              <span className="num">{log.length}</span>
+            quantStanceVal && mcsStanceVal ? (
+              <Chip
+                tone={
+                  AGREEMENT_META[agreementOf(quantStanceVal, mcsStanceVal)].tone
+                }
+              >
+                {
+                  AGREEMENT_META[agreementOf(quantStanceVal, mcsStanceVal)]
+                    .label
+                }
+              </Chip>
+            ) : undefined
+          }
+        >
+          <AgreementExplainer quant={quantStanceVal} mcs={mcsStanceVal} />
+        </Panel>
+
+        <Panel
+          title="Router status"
+          icon={<Network />}
+          actions={
+            <span className="num text-[11px] text-faint">
+              {router.total} calls
             </span>
           }
         >
-          {/* Error state */}
-          {error && <ErrorBlock message={error} />}
-
-          {/* Loading skeletons */}
-          {!error && loading && log.length === 0 && (
-            <div>
-              <VerdictSkeleton />
-              <VerdictSkeleton />
-              <VerdictSkeleton />
-              <VerdictSkeleton />
+          {error ? (
+            <ErrorBlock message={error} />
+          ) : loading && log.length === 0 ? (
+            <div className="flex h-[180px] items-center justify-center text-[11px] text-faint">
+              <span className="animate-pulse">reading router telemetry…</span>
             </div>
+          ) : (
+            <RouterStatusPanel status={router} />
           )}
-
-          {/* Empty state */}
-          {!error && !loading && log.length === 0 && (
-            <div className="flex flex-col items-center gap-2 px-3.5 py-12 text-center">
-              <MessageSquareQuote className="h-6 w-6 text-faint" />
-              <p className="text-[12px] text-muted-foreground">
-                No reasoner verdicts yet.
-              </p>
-              <p className="text-[11px] text-faint">
-                The reasoner only fires on the 2s slow loop when the gate and
-                classifier surface a candidate.
-              </p>
-            </div>
-          )}
-
-          {/* Verdicts */}
-          {!error && log.length > 0 && (
-            <div className="max-h-[560px] overflow-y-auto scrollbar-thin">
-              {log.map((r) => (
-                <VerdictRow key={r.id} r={r} />
-              ))}
-            </div>
-          )}
-        </Panel>
-
-        {/* ---- Footer note ---- */}
-        <Panel className="overflow-hidden">
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-3.5 py-2.5 text-[11px]">
-            <span className="flex items-center gap-1.5 text-faint">
-              <AlertTriangle className="h-3 w-3 text-violet" />
-              How to read this log
-            </span>
-            <span className="flex items-center gap-1.5 text-muted-foreground">
-              <Ban className="h-3 w-3 text-danger" />
-              Veto = entry blocked outright
-            </span>
-            <span className="flex items-center gap-1.5 text-muted-foreground">
-              <TriangleAlert className="h-3 w-3 text-warn" />
-              Narrative failure = trim / exit, never add
-            </span>
-            <span className="flex items-center gap-1.5 text-muted-foreground">
-              <Lock className="h-3 w-3 text-faint" />
-              Parse fail / timeout → fail safe to Hold
-            </span>
-          </div>
         </Panel>
       </div>
-    </Layout>
+
+      {/* ---- Verdict feed ---- */}
+      <Panel
+        title="Reasoner verdict log"
+        icon={<MessageSquareQuote />}
+        actions={
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <LiveDot tone="warn" />
+            <span className="num">{log.length}</span>
+          </span>
+        }
+      >
+        {/* Error state */}
+        {error && <ErrorBlock message={error} />}
+
+        {/* Loading skeletons */}
+        {!error && loading && log.length === 0 && (
+          <div>
+            <VerdictSkeleton />
+            <VerdictSkeleton />
+            <VerdictSkeleton />
+            <VerdictSkeleton />
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!error && !loading && log.length === 0 && (
+          <div className="flex flex-col items-center gap-2 px-3.5 py-12 text-center">
+            <MessageSquareQuote className="h-6 w-6 text-faint" />
+            <p className="text-[12px] text-muted-foreground">
+              No reasoner verdicts yet.
+            </p>
+            <p className="text-[11px] text-faint">
+              The reasoner only fires on the 2s slow loop when the gate and
+              classifier surface a candidate.
+            </p>
+          </div>
+        )}
+
+        {/* Verdicts */}
+        {!error && log.length > 0 && (
+          <div className="max-h-[560px] overflow-y-auto scrollbar-thin">
+            {log.map(r => (
+              <VerdictRow key={r.id} r={r} />
+            ))}
+          </div>
+        )}
+      </Panel>
+
+      {/* ---- Footer note ---- */}
+      <Panel className="overflow-hidden">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-3.5 py-2.5 text-[11px]">
+          <span className="flex items-center gap-1.5 text-faint">
+            <AlertTriangle className="h-3 w-3 text-violet" />
+            How to read this log
+          </span>
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <Ban className="h-3 w-3 text-danger" />
+            Veto = entry blocked outright
+          </span>
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <TriangleAlert className="h-3 w-3 text-warn" />
+            Narrative failure = trim / exit, never add
+          </span>
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <Lock className="h-3 w-3 text-faint" />
+            Parse fail / timeout → fail safe to Hold
+          </span>
+        </div>
+      </Panel>
+    </div>
   );
 }

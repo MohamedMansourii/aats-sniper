@@ -1,0 +1,161 @@
+# AATS Prometheus alerting rules
+# Matches infrastructure.md §7 alert requirements.
+# Routed by alertmanager.yml to Telegram and/or PagerDuty.
+#
+# HONESTY CLAUSE: no win_rate alert or panel — ever.
+# PRIMARY success metric: net_pnl AND model_vs_baseline (GATE-B).
+
+groups:
+  - name: aats.heartbeat
+    interval: 10s
+    rules:
+      # P1: Any module heartbeat goes dead
+      - alert: ModuleHeartbeatDead
+        expr: aats_heartbeat == 0
+        for: 10s
+        labels:
+          severity: critical
+          paging: p1
+        annotations:
+          summary: "AATS module {{ $labels.module }} heartbeat is DEAD"
+          description: >
+            Module {{ $labels.module }} has not emitted a heartbeat for >10s.
+            This is a P1 alert — check the container logs immediately.
+
+  - name: aats.dms
+    interval: 10s
+    rules:
+      # P1: Dead-man's switch approaching fire threshold
+      - alert: DMSHeartbeatStaleCritical
+        expr: aats_dms_heartbeat_age_seconds > 45
+        for: 5s
+        labels:
+          severity: critical
+          paging: p1
+        annotations:
+          summary: "DMS: FAST-loop heartbeat absent {{ $value | printf \"%.0f\" }}s — DMS fires at 60s"
+          description: >
+            The dead-man's switch has not seen a FAST-loop heartbeat for
+            {{ $value | printf "%.0f" }}s.  It will submit pre-signed flatten
+            transactions at T_DMS=60s.  Investigate aats-hotcore immediately.
+
+      - alert: DMSHeartbeatStaleWarning
+        expr: aats_dms_heartbeat_age_seconds > 30
+        for: 5s
+        labels:
+          severity: warning
+          paging: p2
+        annotations:
+          summary: "DMS: FAST-loop heartbeat absent {{ $value | printf \"%.0f\" }}s (warn at 30s)"
+
+  - name: aats.circuit_breaker
+    interval: 5s
+    rules:
+      # P1: Circuit breaker tripped — alert within 10s (AC-053)
+      - alert: CircuitBreakerTripped
+        expr: aats_circuit_breaker_tripped == 1
+        for: 0s
+        labels:
+          severity: critical
+          paging: p1
+        annotations:
+          summary: "AATS daily-loss circuit breaker TRIPPED"
+          description: >
+            The daily-loss circuit breaker has fired.  All new entries halted;
+            open positions handed to survivable-stop layers.
+            Manual re-arm required (POST /api/breaker/reset with operator auth).
+
+  - name: aats.data_freshness
+    interval: 10s
+    rules:
+      # Alert: Geyser feed stale > 1200ms (infrastructure.md §4, FR-057, AC-051)
+      - alert: GeyserFeedStale
+        expr: aats_data_staleness_seconds > 1.2
+        for: 5s
+        labels:
+          severity: warning
+          paging: p2
+        annotations:
+          summary: "Geyser feed stale: {{ $value | printf \"%.1f\" }}s (limit 1.2s)"
+          description: >
+            The most-recent Geyser/Yellowstone event is {{ $value | printf "%.1f" }}s old.
+            The SNIPE loop will skip candidates with stale pre-staged scores.
+            Check RPC connectivity.
+
+  - name: aats.land_rate
+    interval: 30s
+    rules:
+      # Alert: land rate < 35% sustained (NFR-005)
+      - alert: LandRateLow
+        expr: aats_land_rate < 0.35
+        for: 5m
+        labels:
+          severity: warning
+          paging: p2
+        annotations:
+          summary: "Land rate {{ $value | printf \"%.1%\" }} below 35% threshold (NFR-005)"
+          description: >
+            Sustained land rate below 35% for 5 minutes.
+            Tip strategy or RPC/Jito connectivity may need adjustment.
+
+  - name: aats.fast_loop
+    interval: 10s
+    rules:
+      # Alert: FAST tick budget breach rate elevated
+      - alert: FastTickBudgetBreachHigh
+        expr: rate(aats_fast_tick_budget_breach_total[5m]) > 0.1
+        for: 1m
+        labels:
+          severity: warning
+          paging: p2
+        annotations:
+          summary: "FAST loop tick budget (100ms) breaching at {{ $value | printf \"%.2f\" }}/s"
+          description: >
+            The FAST loop is exceeding its 100ms tick budget.
+            This degrades stop-loss responsiveness (FR-053, NFR-002).
+
+  - name: aats.position_drift
+    interval: 30s
+    rules:
+      # Alert: OMS/on-chain position drift
+      - alert: PositionDriftDetected
+        expr: aats_position_drift_count > 0
+        for: 30s
+        labels:
+          severity: critical
+          paging: p1
+        annotations:
+          summary: "{{ $value }} position(s) with OMS/on-chain state divergence"
+          description: >
+            One or more positions have OMS state that doesn't match on-chain truth.
+            Reconciliation required immediately.
+
+  - name: aats.pnl
+    interval: 60s
+    rules:
+      # GATE-B: model vs baseline delta going negative (real edge erosion)
+      - alert: ModelVsBaselineDeltaNegative
+        expr: aats_model_vs_baseline_delta_net_pnl_per_sol < 0
+        for: 10m
+        labels:
+          severity: warning
+          paging: p2
+        annotations:
+          summary: "GATE-B: model-vs-baseline delta is negative ({{ $value | printf \"%.4f\" }})"
+          description: >
+            The model is performing BELOW the naive-momentum baseline on net PnL
+            per SOL at risk.  This is the primary honesty metric — a negative value
+            means no real edge above the baseline.  Review model health.
+
+      # Tip efficiency > 1 sustained (subsidizing validators)
+      - alert: TipEfficiencyAboveOne
+        expr: aats_tip_efficiency > 1.0
+        for: 30m
+        labels:
+          severity: warning
+          paging: p2
+        annotations:
+          summary: "Tip efficiency {{ $value | printf \"%.2f\" }} > 1.0 — subsidizing validators"
+          description: >
+            Tips paid exceed gross PnL.  Net PnL is negative from tips alone.
+            Review tip strategy (TipController edge_cap_frac=0.30 guard).

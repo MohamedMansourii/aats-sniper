@@ -1,0 +1,87 @@
+# AATS Alertmanager routing configuration
+# Routes P1 alerts to Telegram (≤10s, AC-052/053) and optionally PagerDuty.
+# Real credentials are NEVER in this file — they are injected via environment
+# variables at runtime. See .env.example for the schema.
+#
+# Placeholders:
+#   ALERTMANAGER_TELEGRAM_BOT_TOKEN — injected at runtime (Vault ref)
+#   ALERTMANAGER_TELEGRAM_CHAT_ID   — injected at runtime
+#   ALERTMANAGER_PAGERDUTY_KEY      — injected at runtime (if used)
+
+global:
+  resolve_timeout: 5m
+  # Telegram bot token for alerting (NOT the operator bot — a dedicated alert bot)
+  # Real value injected at runtime; placeholder here for config validation.
+  http_config:
+    follow_redirects: true
+
+route:
+  group_by: ['alertname', 'module', 'severity']
+  group_wait: 5s        # fast grouping for P1 (≤10s total target)
+  group_interval: 30s
+  repeat_interval: 4h
+  receiver: 'default-null'
+
+  routes:
+    # P1 critical — circuit breaker, DMS imminent, heartbeat dead, position drift
+    - matchers:
+        - severity="critical"
+      receiver: telegram-p1
+      group_wait: 2s       # fastest possible
+      continue: true       # also send to PagerDuty if configured
+
+    - matchers:
+        - severity="critical"
+        - paging="p1"
+      receiver: pagerduty-p1
+      group_wait: 2s
+
+    # P2 warnings — land rate low, Geyser stale, FAST tick breach, GATE-B
+    - matchers:
+        - severity="warning"
+      receiver: telegram-p2
+      group_wait: 30s
+
+receivers:
+  - name: 'default-null'
+
+  - name: telegram-p1
+    telegram_configs:
+      - bot_token: '${ALERTMANAGER_TELEGRAM_BOT_TOKEN}'
+        chat_id: '${ALERTMANAGER_TELEGRAM_CHAT_ID}'
+        parse_mode: HTML
+        message: |
+          <b>P1 ALERT: {{ .GroupLabels.alertname }}</b>
+          {{ range .Alerts }}
+          <b>Summary:</b> {{ .Annotations.summary }}
+          <b>Description:</b> {{ .Annotations.description }}
+          <b>Since:</b> {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+          {{ end }}
+        # Disable send_resolved=false for circuit-breaker (must page on trip, not on resolve)
+        send_resolved: true
+        http_config:
+          follow_redirects: true
+
+  - name: telegram-p2
+    telegram_configs:
+      - bot_token: '${ALERTMANAGER_TELEGRAM_BOT_TOKEN}'
+        chat_id: '${ALERTMANAGER_TELEGRAM_CHAT_ID}'
+        parse_mode: HTML
+        message: |
+          <b>WARN: {{ .GroupLabels.alertname }}</b>
+          {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+        send_resolved: true
+
+  - name: pagerduty-p1
+    pagerduty_configs:
+      - routing_key: '${ALERTMANAGER_PAGERDUTY_KEY}'
+        severity: critical
+        description: '{{ .GroupLabels.alertname }}: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+
+inhibit_rules:
+  # If the module is dead (P1), suppress lower-severity alerts from same module
+  - source_matchers:
+      - alertname="ModuleHeartbeatDead"
+    target_matchers:
+      - severity="warning"
+    equal: ['module']

@@ -1,0 +1,44 @@
+# AATS — dashboard service Dockerfile
+# Builds the React/Vite operator UI and serves it as static files.
+# VITE_USE_MOCK=true (default) — runs standalone on mock data.
+# When wired to the control plane, set VITE_USE_MOCK=false and
+# VITE_CONTROL_PLANE_URL via environment at build time (or via nginx proxy).
+#
+# NFR-011 / AC-049: dashboard MUST build green on mock. This image enforces it.
+
+# ── Stage 1: Node build ────────────────────────────────────────────────────
+FROM node:20.14.0-slim@sha256:placeholder AS node-builder
+
+WORKDIR /app
+
+# Copy package files first for layer caching
+COPY dashboard/package.json dashboard/package-lock.json ./
+RUN npm ci --ignore-scripts
+
+# Copy source
+COPY dashboard/ ./
+
+# Build with mock as the default (NFR-011)
+# VITE_CONTROL_PLANE_URL can be overridden at build time via --build-arg
+ARG VITE_USE_MOCK=true
+ARG VITE_CONTROL_PLANE_URL=http://localhost:8787
+ENV VITE_USE_MOCK=${VITE_USE_MOCK}
+ENV VITE_CONTROL_PLANE_URL=${VITE_CONTROL_PLANE_URL}
+
+RUN npm run build
+
+# ── Stage 2: nginx static serve ───────────────────────────────────────────
+FROM nginx:1.27.0-alpine@sha256:placeholder AS runtime
+
+LABEL org.opencontainers.image.title="aats-dashboard"
+LABEL org.opencontainers.image.description="AATS operator dashboard (Vite static, served via nginx)"
+
+COPY --from=node-builder /app/dist /usr/share/nginx/html
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+    CMD wget -qO- http://localhost:3000/ || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]

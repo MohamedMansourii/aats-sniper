@@ -1,0 +1,160 @@
+{
+  "$schema": "https://aats.local/schemas/program-allowlist.v1.json",
+  "version": "1.0.0",
+  "owner": "crypto-security-engineer",
+  "task": "T-251",
+  "authority": "ADR-0009 + infrastructure.md §5.2 (refusal #2 full enumerated allowlist, refusal #3 tip-account pinning)",
+  "description": "The signer-side program-ID allowlist and the value-moving-transfer destination pin. aats-signer LOADS this at boot, runs the build-time / boot-time live-verification described below, and REFUSES to sign any transaction that (a) carries an instruction whose program_id is not in `allowed_programs`, or (b) carries a System-program SOL transfer whose recipient is not in `value_transfer_recipient_pin`. This file is the SOURCE OF POLICY, not a hot-path decoder literal — the build-time guard (execution-venue.md §3.2) keeps these IDs OUT of any hot-path decoder/snipe file; they live here only.",
+  "HARD_RULES": {
+    "no_stale_id_in_hot_path": "These program IDs are DATA loaded here, never literals in a decoder or snipe-loop file (execution-venue.md §3.2 build-time guard). The signer reads them from this file; the hot core reads venue program IDs from the live-verified venue registry.",
+    "verify_at_build": "Every entry below is marked VERIFY-AT-BUILD. The signer's boot probe (and CI) MUST confirm each `program_id` exists on-chain and is `executable=true` before it is admitted to the live allowlist. An entry that fails verification is dropped from the live set (fail-closed): an unverifiable ID is NOT allowlisted, so its instructions are REFUSED. IDs rotate (pump.fun's migration target already moved to PumpSwap, A-001) — a stale literal is the single most dangerous sniper bug.",
+    "fail_closed": "Default-deny. Any program_id NOT explicitly present in the live (verified) set is refused. Adding a program is a config + deploy change, never a runtime POST.",
+    "tip_accounts_authoritative_source": "The 8 Jito tip accounts below are REFERENCE values for review only. The signer fetches the authoritative set from `getTipAccounts` at boot (infrastructure.md §5.2 refusal #3) and pins THAT set. If the boot fetch disagrees with this file, the signer logs a mismatch alert and pins the boot-fetched set; it does NOT silently trust the file. This file's copy exists so a reviewer can diff it, and so the system can fail-closed (refuse value transfers) if getTipAccounts is unreachable at boot rather than widening the pin."
+  },
+  "allowed_programs": [
+    {
+      "name": "system_program",
+      "program_id": "11111111111111111111111111111111",
+      "category": "core",
+      "verify_at_build": true,
+      "rationale": "Required for the Jito tip transfer and ATA-rent funding. Its presence REQUIRES refusal #3 (value-moving-transfer pinning) below — System transfers are constrained by recipient, never allowed by omission.",
+      "constrained_by": "value_transfer_recipient_pin"
+    },
+    {
+      "name": "compute_budget_program",
+      "program_id": "ComputeBudget111111111111111111111111111111",
+      "category": "core",
+      "verify_at_build": true,
+      "rationale": "Sets CU limit + CU price (priority fee) on every snipe/exit tx. Moves no value. Carries no exfiltration path."
+    },
+    {
+      "name": "spl_token_program",
+      "program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "category": "core",
+      "verify_at_build": true,
+      "rationale": "SPL token transfers/approvals for the bought/sold token leg. NOTE: the on-chain hygiene runbook (custody-policy.md) forbids standing unlimited `Approve` delegations on the funding wallet; the signer SHOULD reject a Token `Approve`/`ApproveChecked` with an unbounded amount targeting an unknown delegate (see custody-policy.md on-chain hygiene)."
+    },
+    {
+      "name": "spl_token_2022_program",
+      "program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "category": "core",
+      "verify_at_build": true,
+      "candidate": true,
+      "rationale": "Token-2022 mints exist among meme launches. Marked candidate: admit only if the venue path actually emits Token-2022 instructions, else keep it OUT of the live set (least privilege)."
+    },
+    {
+      "name": "associated_token_account_program",
+      "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "category": "core",
+      "verify_at_build": true,
+      "rationale": "Creates the wallet's ATA for the bought token. Rent destination must be the wallet's own derived ATA — see value_transfer_recipient_pin.own_ata_rent."
+    },
+    {
+      "name": "pump_fun_bonding_curve",
+      "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "category": "venue",
+      "venue": "pump.fun",
+      "status": "active",
+      "verify_at_build": true,
+      "rationale": "pump.fun bonding-curve program — primary launch source. From the live-verified venue registry (execution-venue.md §3); duplicated here as the signer's independent allowlist copy.",
+      "registry_xref": "VenueRegistryEntry.venue=pump.fun"
+    },
+    {
+      "name": "pumpswap_amm",
+      "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+      "category": "venue",
+      "venue": "pumpswap",
+      "status": "active",
+      "verify_at_build": true,
+      "rationale": "PumpSwap AMM — pump.fun's primary migration target (A-001). Migration sniper path. VERIFY-AT-BUILD is critical here: this is the ID that replaced the old Raydium migration target.",
+      "registry_xref": "VenueRegistryEntry.venue=pumpswap, migration_target of pump.fun"
+    },
+    {
+      "name": "raydium_amm_v4",
+      "program_id": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+      "category": "venue",
+      "venue": "raydium_v4",
+      "status": "active",
+      "verify_at_build": true,
+      "rationale": "Raydium AMM v4 (constant-product). Direct-AMM snipe/exit + Jupiter-route leg + fallback exit path (A-011).",
+      "registry_xref": "VenueRegistryEntry.venue=raydium_v4"
+    },
+    {
+      "name": "raydium_cpmm",
+      "program_id": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+      "category": "venue",
+      "venue": "raydium_cpmm",
+      "status": "active",
+      "verify_at_build": true,
+      "rationale": "Raydium CPMM (constant-product market maker, no OpenBook dependency). Newer migration/launch target.",
+      "registry_xref": "VenueRegistryEntry.venue=raydium_cpmm"
+    },
+    {
+      "name": "jupiter_aggregator_v6",
+      "program_id": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+      "category": "router",
+      "status": "active",
+      "verify_at_build": true,
+      "rationale": "Jupiter v6 router — used for EXITS / survivors only (snipe buy is direct-AMM, FR-028). A Jupiter swap may internally route through allowed venue programs; the signer still independently checks every inner program_id against this list and every System transfer against the recipient pin, so a malicious route cannot exfiltrate via Jupiter.",
+      "registry_xref": "exit path (execution-venue.md §2 JitoJupiterVenue exits)"
+    },
+    {
+      "name": "meteora_dlmm",
+      "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+      "category": "venue",
+      "venue": "meteora",
+      "status": "candidate",
+      "verify_at_build": true,
+      "rationale": "Meteora DLMM — enrichment/discovery CANDIDATE only (execution-venue.md §3.3). NOT in the live allowlist until verified AND a snipe/exit path actually targets it. Kept out of the hot path until promoted to active by config + deploy."
+    },
+    {
+      "name": "moonshot",
+      "program_id": "MoonCVVNZFSYkqNXP6bxHLPL6QQJiMagDL3qcqUQTrG",
+      "category": "venue",
+      "venue": "moonshot",
+      "status": "candidate",
+      "verify_at_build": true,
+      "rationale": "Moonshot — enrichment/discovery CANDIDATE only. NOT in the live allowlist until verified and wired. Least privilege: candidate venues do not widen the signing surface."
+    }
+  ],
+  "live_set_policy": {
+    "admit_only_status": [
+      "active"
+    ],
+    "candidates_excluded_from_signing": "Entries with status `candidate` (meteora, moonshot, token_2022 unless emitted) are present for discovery/enrichment but are NOT admitted to the signer's live allowlist until a deploy promotes them. The signer's live set = core programs + active venue programs + jupiter_v6 (verified at boot).",
+    "on_verify_failure": "drop_from_live_set_and_alert"
+  },
+  "value_transfer_recipient_pin": {
+    "authority": "infrastructure.md §5.2 refusal #3",
+    "rule": "Every System-program SOL transfer (and any value-moving CPI that lands lamports) MUST have a recipient in this closed set. Any other recipient => REFUSE with reason `signer_unpinned_transfer`. This closes the SOL-exfiltration path that admitting the System program would otherwise reopen.",
+    "jito_tip_accounts": {
+      "source_of_truth": "getTipAccounts at boot (fetched live, pinned). The list below is a VERIFY-AT-BUILD reference copy for review and for fail-closed behaviour if getTipAccounts is unreachable.",
+      "verify_at_build": true,
+      "expected_count": 8,
+      "accounts": [
+        "9n3d1K5YD2vECAbRFhFFGYNNjiXtHXJWn9F31t89vsAV",
+        "aTtUk2DHgLhKZRDjePq6eiHRKC1XXFMBiSUfQ2JNDbN",
+        "B1mrQSpdeMU9gCvkJ6VsXVVoYjRGkNA7TtjMyqxrhecH",
+        "9ttgPBBhRYFuQccdR1DSnb7hydsWANoDsV3P9kaGMCEh",
+        "4xgEmT58RwTNsF5xm2RMYCnR1EVukdK8a1i2qFjnJFu3",
+        "EoW3SUQap7ZeynXQ2QJ847aerhxbPVr843uMeTfc9dxM",
+        "E2eSqe33tuhAHKTrwky5uEjaVqnb2T9ns6nHHUrN8588",
+        "ARTtviJkLLt6cHGQDydfo1Wyk6M4VGZdKZ2ZhdnJL336"
+      ],
+      "NOTE": "These reference values are the well-published Jito tip-account set. Because they rotate/expand only via Jito governance and the architecture pins the boot-fetched set, the signer treats getTipAccounts as authoritative and only uses this copy to (a) diff/alert on mismatch and (b) fail-closed if the live fetch fails. VERIFY-AT-BUILD: CI re-fetches getTipAccounts and asserts this copy still matches the live set; a mismatch fails the build so a stale pin is never shipped silently."
+    },
+    "own_ata_rent": {
+      "rule": "ATA-creation rent transfers are allowed ONLY when the destination is an ATA deterministically derived from (WALLET_PUBKEY, mint, ATA program). The signer recomputes the ATA address from the wallet pubkey it holds and the tx's mint, and refuses any ATA-rent transfer to a non-derived address.",
+      "derivation": "find_program_address([wallet_pubkey, spl_token_program, mint], associated_token_account_program)"
+    }
+  },
+  "build_time_verification": {
+    "ci_steps": [
+      "1. Assert no base58 program-ID-shaped literal appears in any hot-path decoder/snipe file (execution-venue.md §3.2 guard) — this file is the only home for these IDs.",
+      "2. For each `active` + `core` + `router` entry: getAccountInfo(program_id) and assert account.executable == true on the configured cluster.",
+      "3. Re-fetch getTipAccounts and assert the 8 reference accounts equal the live set (fail the build on drift).",
+      "4. Assert the live allowlist count, the tip-account count (==8), and that the System program is present ONLY together with a non-empty value_transfer_recipient_pin."
+    ],
+    "fail_mode": "build_fails_closed"
+  }
+}

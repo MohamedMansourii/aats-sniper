@@ -1,0 +1,54 @@
+# AATS .dockerignore — keep images lean and secret-free
+#
+# HARD RULE: no .env files (real values) ever enter an image layer.
+# The .env.example is included (schema documentation only, no real values).
+
+# secrets / keys (NEVER in an image)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.keypair
+*-keypair.json
+keypair*.json
+wallet*.json
+*-wallet.json
+trade-wallet*.json
+secrets/
+
+# git
+.git
+.gitignore
+
+# CI / agency artifacts
+.agency/
+.claude/
+.github/
+
+# build artifacts (regenerated inside Docker)
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+coverage/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+target/           # Rust build dir
+
+# OS noise
+.DS_Store
+Thumbs.db
+*.log
+.qa-tmp/
+
+# Large non-essential files
+Kooora-Site-Architecture-Blueprint.pdf
+memecoin-bot/
+docs/

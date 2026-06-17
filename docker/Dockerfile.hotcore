@@ -1,0 +1,53 @@
+# AATS — aats-hotcore service Dockerfile (Rust)
+# Runs the SNIPE + FAST loops — the ONLY code on the hot path.
+#
+# ARCHITECTURE NOTE (ADR-0002):
+#   Python never executes on this path. The binary communicates with the
+#   Python SLOW loop exclusively via Redis Streams + KV.
+#   Signing crosses to aats-signer via local Unix socket (ADR-0009).
+#
+# DRY-RUN DEFAULT: DRY_RUN_ENABLED=true — real submit is disabled.
+# No secrets in this file.
+
+# ── Stage 1: Rust build ────────────────────────────────────────────────────
+FROM rust:1.79.0-slim@sha256:placeholder AS rust-builder
+
+WORKDIR /build
+
+# Install C linker (needed by some Solana crates)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY rust/ /build/rust/
+
+# Build release binary
+WORKDIR /build/rust
+RUN cargo build --release --bin aats-hotcore
+
+# ── Stage 2: minimal runtime ───────────────────────────────────────────────
+FROM debian:bookworm-slim@sha256:placeholder AS runtime
+
+LABEL org.opencontainers.image.title="aats-hotcore"
+LABEL org.opencontainers.image.description="AATS SNIPE+FAST hot core (Rust)"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && adduser --disabled-password --gecos "" --uid 1000 aats
+
+COPY --from=rust-builder /build/rust/target/release/aats-hotcore /usr/local/bin/aats-hotcore
+
+USER aats
+
+ENV DRY_RUN_ENABLED=true
+ENV RUST_LOG=info
+
+# Metrics port
+ENV METRICS_PORT=9102
+EXPOSE 9102
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
+    CMD wget -qO- http://localhost:9102/health || exit 1
+
+CMD ["/usr/local/bin/aats-hotcore"]
