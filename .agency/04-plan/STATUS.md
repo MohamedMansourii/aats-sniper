@@ -1,6 +1,22 @@
 # AATS STATUS — rolled-up
 
-_Last updated: 2026-06-17 by `orchestrator` (**✅ RUNTIME COMPLETION — `docker compose up` NOW ACTUALLY RUNS THE PAPER STACK — `05-reports/gates/RUNTIME-compose-up.md`.**
+_Last updated: 2026-06-17 by `orchestrator` (**✅ GEYSER-live RECORDED — real Yellowstone Geyser gRPC live-ingestion transport is WIRED + offline-proven — `05-reports/gates/RUNTIME-geyser-live.md`.**
+`GeyserTransport` (`transport.py:300/406`) is now a REAL Yellowstone/Dragon's-Mouth gRPC client (not a stub): opens `grpc.aio.secure_channel` with TLS + env-only `x-token`
+metadata creds, sends a real `SubscribeRequest` (TRANSACTIONS, `account_include=sorted(program_ids)`, `vote/failed=False`, `commitment=PROCESSED`, `from_slot` resume) via
+the extracted pure helper `_build_subscribe_request()` (`:669`), consumes `stub.Subscribe()`, parses each `SubscribeUpdateTransaction` → `RawTransaction` (`_parse_geyser_tx`
+`:483`; sig→base58, ALT keys appended, inner-ix flattened), and reconnects with exponential backoff + jitter resuming from `from_slot`. **Point-in-time honesty HELD:**
+`block_time_unix_s` hard-set to `None` (`:610`) — the transport CANNOT fabricate event time; the decoder holds events PENDING (T-300a). **Offline-proven** (dual G3 PASS,
+`code-reviewer` + `backtest-qa-engineer`): `tests/ingestion/test_geyser_transport.py` 42/42 (full `tests/ingestion/` 393/393, zero regressions); `TestSubscribeStreamPath`
+patches `geyser_pb2_grpc.GeyserStub` with a fake async iterator of proto updates and drives valid-yield / slot-skip / parse-error-continue / captured-request asserts /
+`is_connected` transitions / `AioRpcError`+generic absorbed / `CancelledError` propagates; `transport.py` coverage 52%→78%; mutation-meaningful (vote-flip + slot-skip-disable
+→ 3 RED on production code). `--source=geyser` reads `GEYSER_ENDPOINT`+`GEYSER_TOKEN` from env only, warns+yields-nothing if unset; all `PLUG_IN_HERE` removed from
+`shadow_record.py`. **HONEST CAVEAT — LIVE INGESTION IS UNVALIDATED:** no real on-chain tx has ever flowed through this code (every test uses a FAKE in-process proto
+iterator). **Stage 2 still needs the operator's Helius/Triton Geyser endpoint + token** (runtime env, `.env.example`); live custody/RPC safety is the
+`crypto-security-engineer` lane (COND-G4-2), not cleared here. This is ingestion plumbing only — NOT an edge-vs-baseline / GATE-A / GATE-B gate. **EDGE REMAINS
+`UNPROVEN-NO-REAL-DATA`** until the operator deploys a real endpoint+key, a real recorded corpus is collected via `--source=geyser`, and GATE-A/GATE-B re-run on that real
+data and PASS. Real capital stays `DRY_RUN_ENABLED=true` + UNREACHABLE; the R3 pre-live checklist (Block A/B/C) is unchanged. Open (non-blocking): grpcio-absent ImportError
+branch `:332-334` uncovered (MINOR); `EnhancedWsFallback` `:716-779` keeps its `PLUG_IN_HERE` correctly (genuine out-of-scope WS stub). Prior:
+**✅ RUNTIME COMPLETION — `docker compose up` NOW ACTUALLY RUNS THE PAPER STACK — `05-reports/gates/RUNTIME-compose-up.md`.**
 The G5/G6 "ONE `docker compose up`" claim had been recorded on `docker compose config` exit 0 (a static parse) — the stack had **never been brought up** and **did not start**.
 Fixed and **VERIFIED BY EXECUTION**: 3 structural gaps + 7 runtime root causes. (1) **RUST-build** (dual G3 PASS) — both Rust crates were unbuildable (declared the
 non-existent `ort=1.19`); rewrote `aats-hotcore`/`aats-signer` as honest minimal `tokio`+`hyper` scaffolds serving `GET /health` on their `METRICS_PORT`, paper-only, no

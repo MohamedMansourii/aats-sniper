@@ -26,8 +26,6 @@ REAL data collection requires ``--source=geyser`` with:
   - A running Geyser/Yellowstone gRPC endpoint (GEYSER_ENDPOINT env var)
   - A valid auth token (GEYSER_TOKEN env var)
   - Connection to Solana mainnet or a mainnet fork
-  - The gRPC protobuf parse wired at the PLUG_IN_HERE marker in
-    GeyserTransport._parse_geyser_tx() (transport.py)
 
 This is the operator's R3-path action (EDGE-VERDICT.md Block A).  The recorded
 corpus from real data is the prerequisite for training and edge validation.
@@ -57,9 +55,8 @@ The file is readable back with json.loads() for immediate inspection.
 
 OPERATOR NOTES
 --------------
-- The Geyser transport is NOT connected in this build environment.  The stub
-  logs a warning and yields nothing; in production you wire the real gRPC client
-  at GeyserTransport._parse_geyser_tx() (PLUG_IN_HERE marker in transport.py).
+- The Geyser transport requires GEYSER_ENDPOINT and GEYSER_TOKEN env vars.
+  Without them the transport logs a clear error and yields nothing safely.
 - The program-allowlist path defaults to config/program-allowlist.json relative
   to the project root.  Override with --allowlist.
 - No data is written to the git repo.  --out defaults to a system temp dir.
@@ -326,9 +323,9 @@ async def _run(
         if not endpoint:
             logger.warning(
                 "GEYSER_ENDPOINT is not set.  "
-                "GeyserTransport will log a warning and yield no events.  "
-                "Set GEYSER_ENDPOINT + GEYSER_TOKEN and wire the gRPC parse "
-                "at the PLUG_IN_HERE marker in transport.py."
+                "GeyserTransport will log a clear error and yield no events.  "
+                "Set GEYSER_ENDPOINT + GEYSER_TOKEN (see .env.example) to "
+                "connect to a live Yellowstone/Helius/Triton endpoint."
             )
         transport = GeyserTransport(
             endpoint=endpoint,
@@ -474,8 +471,7 @@ def _parse_args() -> argparse.Namespace:
         default="replay",
         help=(
             "replay = deterministic offline demo (SYNTHETIC data, default).  "
-            "geyser = live Geyser gRPC (requires GEYSER_ENDPOINT + GEYSER_TOKEN env; "
-            "gRPC parse must be wired at PLUG_IN_HERE in transport.py)."
+            "geyser = live Geyser gRPC (requires GEYSER_ENDPOINT + GEYSER_TOKEN env)."
         ),
     )
     parser.add_argument(

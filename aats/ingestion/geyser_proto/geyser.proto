@@ -1,0 +1,268 @@
+// Yellowstone / Dragon's-Mouth gRPC Geyser proto.
+// Source: rpcpool/yellowstone-grpc yellowstone-grpc-proto/proto/geyser.proto
+// Vendored 2025-06 against the version served by Helius, Triton, and QuickNode.
+//
+// VENDOR NOTE: We include only the subset needed for M1 ingestion:
+//   - Geyser.Subscribe RPC
+//   - SubscribeRequest with transactions filter and commitment
+//   - SubscribeUpdate oneof (we only consume the transaction arm)
+//   - CommitmentLevel enum
+// Ping/Pong, block, entry, account, slot arms are proto-compatible stubs
+// so the oneof round-trips correctly without generating unreachable code.
+
+syntax = "proto3";
+
+package geyser;
+
+import "google/protobuf/timestamp.proto";
+import "solana_storage.proto";
+
+option go_package = "github.com/rpcpool/yellowstone-grpc/proto";
+
+// ── Service ──────────────────────────────────────────────────────────────
+
+service Geyser {
+  // Bidirectional stream: client sends SubscribeRequest(s); server streams SubscribeUpdate.
+  rpc Subscribe(stream SubscribeRequest) returns (stream SubscribeUpdate);
+  rpc Ping(PingRequest) returns (PongResponse);
+  rpc GetLatestBlockhash(GetLatestBlockhashRequest) returns (GetLatestBlockhashResponse);
+  rpc GetBlockHeight(GetBlockHeightRequest) returns (GetBlockHeightResponse);
+  rpc GetSlot(GetSlotRequest) returns (GetSlotResponse);
+  rpc IsBlockhashValid(IsBlockhashValidRequest) returns (IsBlockhashValidResponse);
+  rpc GetVersion(GetVersionRequest) returns (GetVersionResponse);
+}
+
+// ── Commitment ────────────────────────────────────────────────────────────
+
+enum CommitmentLevel {
+  PROCESSED = 0;
+  CONFIRMED = 1;
+  FINALIZED = 2;
+}
+
+// ── Subscribe request ─────────────────────────────────────────────────────
+
+message SubscribeRequest {
+  map<string, SubscribeRequestFilterAccounts>     accounts           = 1;
+  map<string, SubscribeRequestFilterSlots>        slots              = 2;
+  map<string, SubscribeRequestFilterTransactions> transactions       = 3;
+  map<string, SubscribeRequestFilterTransactions> transactions_status = 10;
+  map<string, SubscribeRequestFilterBlocks>       blocks             = 4;
+  map<string, SubscribeRequestFilterBlocksMeta>   blocks_meta        = 5;
+  map<string, SubscribeRequestFilterEntry>        entry              = 8;
+  optional CommitmentLevel                        commitment         = 6;
+  repeated SubscribeRequestAccountsDataSlice      accounts_data_slice = 7;
+  optional SubscribeRequestPing                   ping               = 9;
+  optional uint64                                 from_slot          = 11;
+}
+
+// ── Transaction filter (the one we use) ──────────────────────────────────
+
+message SubscribeRequestFilterTransactions {
+  optional bool   vote             = 1;
+  optional bool   failed           = 2;
+  optional string signature        = 5;
+  repeated string account_include  = 3;
+  repeated string account_exclude  = 4;
+  repeated string account_required = 6;
+}
+
+// ── Other filter types (needed for proto map completeness) ───────────────
+
+message SubscribeRequestFilterAccounts {
+  repeated string account  = 1;
+  repeated string owner    = 2;
+  repeated SubscribeRequestFilterAccountsFilter filters = 3;
+  optional bool no_tx_metadata = 4;
+}
+
+message SubscribeRequestFilterAccountsFilter {
+  oneof filter {
+    SubscribeRequestFilterAccountsFilterMemcmp memcmp   = 1;
+    uint64                                     data_size = 2;
+    bool                                       token_account_state = 3;
+  }
+}
+
+message SubscribeRequestFilterAccountsFilterMemcmp {
+  uint64 offset = 1;
+  oneof data {
+    bytes  bytes    = 2;
+    string base58   = 3;
+    string base64   = 4;
+  }
+}
+
+message SubscribeRequestFilterSlots {
+  optional bool filter_by_commitment = 1;
+  optional bool interslot_updates    = 2;
+}
+
+message SubscribeRequestFilterBlocks {
+  repeated string account_include         = 1;
+  optional bool   include_transactions    = 2;
+  optional bool   include_accounts        = 3;
+  optional bool   include_entries         = 4;
+}
+
+message SubscribeRequestFilterBlocksMeta {}
+
+message SubscribeRequestFilterEntry {}
+
+message SubscribeRequestAccountsDataSlice {
+  uint64 offset = 1;
+  uint64 length = 2;
+}
+
+message SubscribeRequestPing {
+  int32 id = 1;
+}
+
+// ── Subscribe update (server → client) ───────────────────────────────────
+
+message SubscribeUpdate {
+  repeated string filters = 1;
+  oneof update_oneof {
+    SubscribeUpdateAccount         account            = 2;
+    SubscribeUpdateSlot            slot               = 3;
+    SubscribeUpdateTransaction     transaction        = 4;
+    SubscribeUpdateTransactionStatus transaction_status = 10;
+    SubscribeUpdateBlock           block              = 5;
+    SubscribeUpdatePing            ping               = 6;
+    SubscribeUpdatePong            pong               = 9;
+    SubscribeUpdateBlockMeta       block_meta         = 7;
+    SubscribeUpdateEntry           entry              = 8;
+  }
+  google.protobuf.Timestamp created_at = 11;
+}
+
+// ── Transaction update (the one we consume) ──────────────────────────────
+
+message SubscribeUpdateTransaction {
+  SubscribeUpdateTransactionInfo transaction = 1;
+  uint64                         slot        = 2;
+}
+
+message SubscribeUpdateTransactionInfo {
+  bytes                                               signature   = 1;
+  bool                                                is_vote     = 2;
+  solana.storage.ConfirmedBlock.Transaction           transaction = 3;
+  solana.storage.ConfirmedBlock.TransactionStatusMeta meta        = 4;
+  uint64                                              index       = 5;
+}
+
+// ── Slot update ──────────────────────────────────────────────────────────
+
+message SubscribeUpdateSlot {
+  uint64           slot   = 1;
+  optional uint64  parent = 2;
+  CommitmentLevel  status = 3;
+}
+
+// ── Block meta update (carries block_time — subscribe alongside transactions) ──
+
+message SubscribeUpdateBlockMeta {
+  uint64                                           parent_slot        = 1;
+  string                                           parent_blockhash   = 2;
+  uint64                                           slot               = 3;
+  string                                           blockhash          = 4;
+  repeated solana.storage.ConfirmedBlock.Reward    rewards            = 5;
+  solana.storage.ConfirmedBlock.UnixTimestamp      block_time         = 6;
+  solana.storage.ConfirmedBlock.BlockHeight        block_height       = 7;
+  uint64                                           executed_transaction_count = 8;
+  uint64                                           entries_count      = 10;
+}
+
+// ── Block update (abbreviated — we don't use this path) ──────────────────
+
+message SubscribeUpdateBlock {
+  uint64           parent_slot        = 1;
+  string           parent_blockhash   = 2;
+  uint64           slot               = 3;
+  string           blockhash          = 4;
+  repeated solana.storage.ConfirmedBlock.Reward rewards = 5;
+  solana.storage.ConfirmedBlock.UnixTimestamp   block_time   = 6;
+  solana.storage.ConfirmedBlock.BlockHeight     block_height = 7;
+  repeated SubscribeUpdateTransactionInfo       transactions = 8;
+  uint64           executed_transaction_count = 9;
+  repeated SubscribeUpdateEntry                entries      = 10;
+  uint64           entries_count = 11;
+}
+
+// ── Account update (abbreviated) ─────────────────────────────────────────
+
+message SubscribeUpdateAccount {
+  SubscribeUpdateAccountInfo account  = 1;
+  uint64                     slot     = 2;
+  bool                       is_startup = 3;
+}
+
+message SubscribeUpdateAccountInfo {
+  bytes  pubkey              = 1;
+  uint64 lamports            = 2;
+  bytes  owner               = 3;
+  bool   executable          = 4;
+  uint64 rent_epoch          = 5;
+  bytes  data                = 6;
+  uint64 write_version       = 7;
+  optional bytes txn_signature = 8;
+}
+
+// ── Transaction status (abbreviated) ─────────────────────────────────────
+
+message SubscribeUpdateTransactionStatus {
+  uint64 slot      = 1;
+  bytes  signature = 2;
+  bool   is_vote   = 3;
+  uint64 index     = 4;
+  solana.storage.ConfirmedBlock.TransactionError err = 5;
+}
+
+// ── Ping / pong ───────────────────────────────────────────────────────────
+
+message SubscribeUpdatePing {}
+
+message SubscribeUpdatePong {
+  int32 id = 1;
+}
+
+// ── Entry ─────────────────────────────────────────────────────────────────
+
+message SubscribeUpdateEntry {
+  uint64 slot              = 1;
+  uint64 index             = 2;
+  uint64 num_hashes        = 3;
+  bytes  hash              = 4;
+  uint64 executed_transaction_count = 5;
+  uint64 starting_transaction_index = 6;
+}
+
+// ── Misc RPC types ────────────────────────────────────────────────────────
+
+message PingRequest  { int32 count = 1; }
+message PongResponse { int32 count = 1; }
+
+message GetLatestBlockhashRequest  { optional CommitmentLevel commitment = 1; }
+message GetLatestBlockhashResponse {
+  uint64 slot            = 1;
+  string blockhash       = 2;
+  uint64 last_valid_block_height = 3;
+}
+
+message GetBlockHeightRequest  { optional CommitmentLevel commitment = 1; }
+message GetBlockHeightResponse { uint64 block_height = 1; }
+
+message GetSlotRequest  { optional CommitmentLevel commitment = 1; }
+message GetSlotResponse { uint64 slot = 1; }
+
+message IsBlockhashValidRequest  {
+  string blockhash = 1;
+  optional CommitmentLevel commitment = 2;
+}
+message IsBlockhashValidResponse {
+  uint64 slot  = 1;
+  bool   valid = 2;
+}
+
+message GetVersionRequest  {}
+message GetVersionResponse { string version = 1; }
