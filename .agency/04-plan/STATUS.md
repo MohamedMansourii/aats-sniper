@@ -1,6 +1,29 @@
 # AATS STATUS — rolled-up
 
-_Last updated: 2026-06-17 by `orchestrator` (**✅ GEYSER-live RECORDED — real Yellowstone Geyser gRPC live-ingestion transport is WIRED + offline-proven — `05-reports/gates/RUNTIME-geyser-live.md`.**
+_Last updated: 2026-06-17 by `orchestrator` (**🟢 WS free-tier ingestion RECORDED — WS-hermetic dual G3 CLEARED (both reviewers PASS); WS path BUILT + LIVE-PROVEN on real mainnet — `05-reports/gates/RUNTIME-ws-ingest.md`. SUITE STABLE.**
+The **free-tier-compatible** ingestion transport `EnhancedWsFallback` (`transport.py:742`, source-verified present) works on a STANDARD Helius RPC key (no paid Geyser subscription) and has
+now **STREAMED REAL MAINNET LAUNCH TRANSACTIONS end-to-end** — the first AATS ingestion path proven on real on-chain data (the paid gRPC path is offline-proven only). PRIMARY = Solana standard
+**`logsSubscribe`** WS (one sub/program, `{"mentions":[pid]}` filter, `commitment=confirmed`; on `err==null` → **`getTransaction`** HTTP enrichment); FALLBACK = RPC polling
+**`getSignaturesForAddress`** + `getTransaction`, standard JSON-RPC only — guaranteed on any free-tier key. `--source=ws` wired (`shadow_record.py:340-376`): env-only keys (`RPC_PRIMARY` HTTP +
+optional `WS_ENDPOINT`), `https→wss` derivation, empty-RPC logs+yields-nothing (no crash). **Point-in-time honesty HELD (T-300a):** `block_time_unix_s` from `getTransaction.blockTime` ONLY;
+absent/null/0→`None`, wall-clock NEVER substituted; errored tx dropped; read-only, no sign/submit/keypair — mutation-proven this session (wall-clock leak injected into prod
+`_parse_rpc_get_transaction` → 4 T-300a tests RED, then restored byte-identical). The **paid LaserStream / Yellowstone gRPC** path (`GeyserTransport` `:300`, `RUNTIME-geyser-live.md`) is the
+latency/throughput upgrade lane — untouched; `replay`/`geyser` branches unchanged. **THE PRIOR DETERMINISM BLOCKER IS CLOSED.** WS-hermetic made `tests/ingestion/test_ws_fallback.py` fully
+hermetic (root causes: `asyncio.run()` in sync tests leaking GC-finalized loops that injected `GeneratorExit` into unrelated tests; a shared un-`aclose()`d `_empty_async_gen()`; `_patch_time`
+applied inside nested coroutines). Fix (TEST-LAYER ONLY, prod byte-for-byte unchanged): 9 sync→`async def` under `asyncio_mode=auto` (**0 `asyncio.run()` calls remain — grep-verified, doc
+mentions only**); every early-break `async for` in `try/finally`+`aclose()` (**15 `aclose()` present**); `_empty_async_gen()` fresh-per-test+`aclose()`d; all `_patch_time` at outermost `with`;
+`ruff` clean. **DUAL G3 CLEARED — `code-reviewer` PASS + `backtest-qa-engineer` PASS, both verified by execution:** code-reviewer ran ruff-clean + 5× standalone 29-green + full suite ×3 across
+seeds {0,12345,99991} all 2381/2/0; backtest-qa ran **22 consecutive FULL-suite runs** (18 fixed + 4 random `PYTHONHASHSEED`, `__pycache__` wiped each) → 22/22 green, plus the mutation probe
+above. **INDEPENDENT FINAL STABILITY GATE: 20× consecutive full-suite green** (`PYTHONHASHSEED` 0..19, pycache purged each, `-p no:cacheprovider`) → every run **2381 passed / 2 skipped / 0
+failed**; the 2 skips are the exact allowed `solders`-gated `test_tx_builder.py:161/:186`. Across both gates the fix holds over **42 full-suite runs / >24 distinct hash seeds — SUITE STABLE.**
+The prior PASS-reviewer MAJOR (`test_polling_deduplicates_repeated_sigs` mutation-blind) is addressed (now asserts dedup `call_count==1`). **KNOWN FOLLOW-UP (non-blocking, logged):**
+tighten launch-detection to genuine pump.fun `create` / pool-init events — the WS path currently records **any tx touching the watched programs, incl. quote-token noise** → a clean launch
+corpus needs an instruction-discriminator filter (owner: `data-ingestion-engineer`). NIT: `tests/ingestion/conftest.py` docstring (line 18) is stale ("methods now use `asyncio.run()`").
+**REPO-STATE for the eventual commit:** HEAD (`95cf122`) holds the OLD WS stub, so `transport.py`/`shadow_record.py` show modified vs HEAD — these are intended uncommitted live-WS feature
+changes (WS-B1) that predate WS-hermetic; confirm they carry their own WS-B1 PASS before merge. **EDGE UNCHANGED — ingestion plumbing only, NOT a GATE-A/GATE-B gate. EDGE REMAINS
+`UNPROVEN-NO-REAL-DATA`** — a real corpus must be recorded via `--source=ws`, narrowed by the launch-detection follow-up, then GATE-A AND GATE-B re-run on that real data and PASS. Real capital
+stays `DRY_RUN_ENABLED=true` + UNREACHABLE; the R3 pre-live checklist (Block A/B/C) is unchanged. Prior:
+**✅ GEYSER-live RECORDED — real Yellowstone Geyser gRPC live-ingestion transport is WIRED + offline-proven — `05-reports/gates/RUNTIME-geyser-live.md`.**
 `GeyserTransport` (`transport.py:300/406`) is now a REAL Yellowstone/Dragon's-Mouth gRPC client (not a stub): opens `grpc.aio.secure_channel` with TLS + env-only `x-token`
 metadata creds, sends a real `SubscribeRequest` (TRANSACTIONS, `account_include=sorted(program_ids)`, `vote/failed=False`, `commitment=PROCESSED`, `from_slot` resume) via
 the extracted pure helper `_build_subscribe_request()` (`:669`), consumes `stub.Subscribe()`, parses each `SubscribeUpdateTransaction` → `RawTransaction` (`_parse_geyser_tx`

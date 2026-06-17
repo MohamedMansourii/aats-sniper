@@ -69,6 +69,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import itertools
 import logging
 import os
 import sys
@@ -709,75 +710,716 @@ def _build_subscribe_request(
 
 
 # ---------------------------------------------------------------------------
-# EnhancedWsFallback — STUB (enhanced WebSocket fallback plug-in point)
+# EnhancedWsFallback — LIVE implementation (standard Helius free-tier WS)
 # ---------------------------------------------------------------------------
+
+# JSON-RPC request ID counter — simple monotonic, module-level.
+_ws_rpc_id = itertools.count(1)
+
+
+def _ws_import() -> object:
+    """Import and return the `websockets` module.
+
+    Extracted as a named function so tests can patch `_ws_import` in
+    `aats.ingestion.transport` to inject a fake websockets module without
+    requiring the real websockets package to be installed.
+
+    Example (in tests):
+        with patch("aats.ingestion.transport._ws_import", return_value=fake_ws_mod):
+            ...
+    """
+    try:
+        import websockets  # type: ignore[import]
+        return websockets
+    except ImportError as exc:
+        raise ImportError(
+            "websockets is required for EnhancedWsFallback. "
+            "Install it: pip install websockets==10.4  "
+            "(it is already listed in requirements/requirements.txt)"
+        ) from exc
 
 
 class EnhancedWsFallback(TransportInterface):
-    """Enhanced WebSocket fallback (Helius / Triton / QuickNode enhanced logsSubscribe).
+    """Standard Solana WebSocket + RPC-fetch fallback for Geyser-degraded periods.
 
-    STATUS: STUB — real WebSocket client is NOT instantiated here.
-    The fallback is a REDUNDANCY PATH for when Geyser is degraded, not a
-    feature fork.  It emits the SAME typed RawTransaction that Geyser emits,
-    so the decoder pipeline and bus are identical.
+    Works on a STANDARD (free-tier) Helius RPC key — no paid Geyser subscription
+    required.  Emits the SAME typed RawTransaction contract as GeyserTransport so
+    the decoder pipeline and bus are identical.
 
-    When wired:
-      - Uses websockets / httpx-ws for logsSubscribe and accountSubscribe.
-      - Filters on `mentions` to the active program IDs.
-      - On disconnect: tenacity retry with exponential backoff + jitter.
-      - On reconnect: subscribes from the head of the stream (no from_slot for WS)
-        and emits `data_staleness_ms` until caught up.
+    ARCHITECTURE
+    ------------
+    PRIMARY PATH  — Solana standard logsSubscribe WebSocket
+      Opens one WS connection per `subscribe()` call.
+      For EACH program ID in the ProgramRegistry sends a separate JSON-RPC
+      `logsSubscribe` request with `{"mentions": ["<programId>"]}` and
+      `{"commitment": "confirmed"}`.  One subscription per program ID (the
+      Solana `mentions` filter takes exactly ONE address).
+      On each notification with `err == null`: extracts the tx signature and
+      calls `getTransaction` over the HTTP RPC to fetch the full transaction;
+      maps it to RawTransaction; yields it.
+      Deduplicates on signature so out-of-order / duplicate WS deliveries do
+      not produce duplicate RawTransactions.
 
-    PLUG_IN_HERE: replace the stub body of subscribe() with a real websockets
-    connection, logsSubscribe request, and message parser that maps to RawTransaction.
+    FALLBACK PATH  — RPC polling (getSignaturesForAddress)
+      Activated when: the WS connection fails to connect, or yields nothing for
+      `poll_idle_timeout_s` seconds.  Polls `getSignaturesForAddress` for each
+      program ID every `poll_interval_s` seconds; diffs against seen signatures;
+      calls `getTransaction` on new ones.  Only standard JSON-RPC calls —
+      guaranteed to work on any free-tier RPC key.
+
+    RECONNECT
+      On WS drop the outer `subscribe()` loop retries with exponential backoff
+      + jitter (tenacity-style manual loop).  `data_staleness_ms` rises during
+      dead windows (never silent stale data).
+
+    POINT-IN-TIME CORRECTNESS (T-300a)
+      `block_time_unix_s` is taken from `getTransaction` → `blockTime` field.
+      If `blockTime` is absent or null the RawTransaction is emitted with
+      `block_time_unix_s = None`; the decoder's `_make_event_time()` holds the
+      event PENDING and does NOT substitute wall-clock.
+
+    CREDENTIALS — from environment ONLY, never hardcoded or logged
+      WS_ENDPOINT — WS URL (e.g. wss://mainnet.helius-rpc.com/?api-key=<key>)
+                    If unset, derived from RPC_PRIMARY by replacing https→wss.
+      RPC_PRIMARY — HTTP RPC URL used for getTransaction / polling calls.
+
+    READ-ONLY
+      Never signs, never submits, never holds a keypair.  Every call is a
+      read-only JSON-RPC request.
+
+    BACKPRESSURE
+      subscribe() decodes and yields, then returns to the caller.  No price
+      math, no model call sits between receiving a WS message and yielding it.
     """
+
+    # Retry / timing knobs
+    _WS_RETRY_MIN_WAIT_S: float = 1.0
+    _WS_RETRY_MAX_WAIT_S: float = 30.0
+    _WS_RETRY_MULTIPLIER: float = 2.0
+    _DEFAULT_POLL_INTERVAL_S: float = 3.0
+    _DEFAULT_POLL_IDLE_TIMEOUT_S: float = 10.0
+    _DEFAULT_POLL_SIG_LIMIT: int = 20
+    # How many seen-signatures to keep in the dedup ring (memory-bounded)
+    _DEDUP_RING_MAX: int = 4096
 
     def __init__(
         self,
-        ws_url: str,    # env: ENHANCED_WS_URL
-        api_key: str,   # env: HELIUS_API_KEY / TRITON_API_KEY (never hardcoded)
+        ws_url: str,       # env: WS_ENDPOINT (derived from RPC_PRIMARY if blank)
+        rpc_url: str,      # env: RPC_PRIMARY — for getTransaction / polling
+        poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S,
+        poll_idle_timeout_s: float = _DEFAULT_POLL_IDLE_TIMEOUT_S,
+        poll_sig_limit: int = _DEFAULT_POLL_SIG_LIMIT,
+        max_reconnect_attempts: int = 0,   # 0 = infinite
     ) -> None:
         super().__init__()
-        self._ws_url = ws_url
-        self._api_key = api_key  # NOT logged
+        self._ws_url = ws_url     # NOT logged (may contain API key in query string)
+        self._rpc_url = rpc_url   # NOT logged
+        self._poll_interval_s = poll_interval_s
+        self._poll_idle_timeout_s = poll_idle_timeout_s
+        self._poll_sig_limit = poll_sig_limit
+        self._max_reconnect_attempts = max_reconnect_attempts
         self._connected = False
+        import random
+        self._rng = random.Random()
+        # Dedup ring: set of seen signatures (memory-bounded via _DEDUP_RING_MAX)
+        self._seen_sigs: set[str] = set()
+        self._seen_sigs_order: list[str] = []
 
     @property
     def detection_transport(self) -> DetectionTransport:
-        return DetectionTransport.GEYSER  # WS fallback uses same tag (same event contract)
+        return DetectionTransport.GEYSER  # same contract as Geyser (redundancy path)
 
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
 
     async def subscribe(  # type: ignore[override]
         self,
         program_ids: frozenset[str],
         last_slot: int = 0,
     ) -> AsyncGenerator[RawTransaction, None]:
-        """PLUG_IN_HERE — enhanced WS logsSubscribe / accountSubscribe.
+        """Stream RawTransactions via logsSubscribe WS + getTransaction enrichment.
 
-        Real implementation sketch:
-            async with websockets.connect(self._ws_url) as ws:
-                await ws.send(json.dumps({
-                    "jsonrpc": "2.0", "id": 1,
-                    "method": "logsSubscribe",
-                    "params": [{"mentions": list(program_ids)}, {"commitment": "processed"}]
-                }))
-                async for msg in ws:
-                    data = json.loads(msg)
-                    tx = self._parse_ws_log(data)
-                    if tx:
+        Falls back to RPC polling if the WS connection is unavailable or idle.
+        Reconnects with exponential backoff on WS drop.
+        Deduplicates on signature; out-of-order / duplicate delivery is safe.
+        Yields nothing and logs a clear error if ws_url or rpc_url is empty.
+        """
+        if not self._rpc_url:
+            logger.error(
+                "EnhancedWsFallback: RPC_PRIMARY is not set.  "
+                "Set RPC_PRIMARY (e.g. https://mainnet.helius-rpc.com/?api-key=<key>) "
+                "in the environment.  See .env.example.  Yielding nothing."
+            )
+            return
+
+        if not program_ids:
+            logger.warning("EnhancedWsFallback: program_ids is empty — nothing to subscribe.")
+            return
+
+        attempt = 0
+        while True:
+            attempt += 1
+            if self._max_reconnect_attempts > 0 and attempt > self._max_reconnect_attempts:
+                logger.error(
+                    "EnhancedWsFallback: max reconnect attempts (%d) reached — giving up.",
+                    self._max_reconnect_attempts,
+                )
+                break
+
+            if self._ws_url:
+                # Try the primary WS path
+                try:
+                    async for tx in self._stream_ws(program_ids):
+                        yield tx
+                    # Stream ended cleanly — reconnect
+                    logger.info(
+                        "EnhancedWsFallback: WS stream ended — reconnecting (attempt %d).",
+                        attempt,
+                    )
+                except _WsConnectError as exc:
+                    self._connected = False
+                    logger.warning(
+                        "EnhancedWsFallback: WS connect failed (attempt %d): %s — "
+                        "switching to polling fallback.",
+                        attempt, exc,
+                    )
+                    # Fall through to polling below
+                except asyncio.CancelledError:
+                    self._connected = False
+                    logger.info("EnhancedWsFallback: cancelled.")
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    self._connected = False
+                    logger.warning(
+                        "EnhancedWsFallback: WS error (attempt %d): %s — will retry.",
+                        attempt, exc, exc_info=True,
+                    )
+            else:
+                logger.warning(
+                    "EnhancedWsFallback: WS_ENDPOINT not set — using RPC polling only."
+                )
+
+            # Polling fallback: a guaranteed-to-work path on any free-tier RPC key
+            try:
+                async for tx in self._stream_poll(program_ids):
+                    yield tx
+            except asyncio.CancelledError:
+                self._connected = False
+                logger.info("EnhancedWsFallback: polling cancelled.")
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "EnhancedWsFallback: polling error (attempt %d): %s",
+                    attempt, exc, exc_info=True,
+                )
+
+            # Backoff before next attempt
+            wait_s = min(
+                self._WS_RETRY_MIN_WAIT_S * (self._WS_RETRY_MULTIPLIER ** (attempt - 1)),
+                self._WS_RETRY_MAX_WAIT_S,
+            )
+            jitter = self._rng.uniform(0, wait_s * 0.25)
+            sleep_s = wait_s + jitter
+            logger.info(
+                "EnhancedWsFallback: backing off %.2fs before reconnect.", sleep_s
+            )
+            await asyncio.sleep(sleep_s)
+
+    # ------------------------------------------------------------------
+    # PRIMARY: WebSocket logsSubscribe
+    # ------------------------------------------------------------------
+
+    async def _stream_ws(
+        self, program_ids: frozenset[str]
+    ) -> AsyncGenerator[RawTransaction, None]:
+        """Open one WS connection, subscribe to each program ID, yield RawTransactions.
+
+        Uses websockets==10.4 (already in requirements.txt).
+        One logsSubscribe per program ID (the `mentions` filter takes one address).
+        On each log notification with err==null: getTransaction → RawTransaction.
+        Falls back to polling path if WS is idle for poll_idle_timeout_s.
+
+        The `websockets` module is imported via `_ws_import()` so tests can
+        patch `aats.ingestion.transport._ws_import` without needing the real
+        websockets package installed.
+        """
+        _ws = _ws_import()
+
+        import json
+
+        logger.info(
+            "EnhancedWsFallback: opening WS connection to endpoint "
+            "(URL contains API key — not logged)"
+        )
+
+        try:
+            async with _ws.connect(  # type: ignore[attr-defined]
+                self._ws_url,
+                ping_interval=20,
+                ping_timeout=10,
+                close_timeout=5,
+            ) as ws:
+                self._connected = True
+                logger.info(
+                    "EnhancedWsFallback: WS connected — sending %d logsSubscribe requests.",
+                    len(program_ids),
+                )
+
+                # One subscription per program ID
+                sub_id_to_pid: dict[int, str] = {}
+                for pid in sorted(program_ids):  # sorted for determinism
+                    req_id = next(_ws_rpc_id)
+                    await ws.send(json.dumps({
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "method": "logsSubscribe",
+                        "params": [
+                            {"mentions": [pid]},
+                            {"commitment": "confirmed"},
+                        ],
+                    }))
+                    # Record the request ID → program ID mapping; subscription
+                    # confirmation maps req_id → subscription_id in the response.
+                    sub_id_to_pid[req_id] = pid
+
+                # subscription_id → program_id (populated from confirmations)
+                confirmed_subs: dict[int, str] = {}
+
+                # Idle-timeout gate: if no useful message arrives in
+                # poll_idle_timeout_s, exit _stream_ws and let the caller
+                # fall through to polling.
+                last_event_wall_s = _time_now_s()
+
+                async for raw_msg in ws:
+                    try:
+                        msg = json.loads(raw_msg)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+                    # Subscription confirmation: {"jsonrpc":"2.0","result":<sub_id>,"id":<req_id>}
+                    if "result" in msg and "id" in msg and isinstance(msg["result"], int):
+                        req_id = msg["id"]
+                        if req_id in sub_id_to_pid:
+                            sub_id = msg["result"]
+                            pid = sub_id_to_pid[req_id]
+                            confirmed_subs[sub_id] = pid
+                            logger.info(
+                                "EnhancedWsFallback: logsSubscribe confirmed "
+                                "sub_id=%d for program %s",
+                                sub_id, pid,
+                            )
+                        continue
+
+                    # Log notification: {"jsonrpc":"2.0","method":"logsNotification","params":{...}}
+                    if msg.get("method") != "logsNotification":
+                        # Check idle timeout for non-notification messages too
+                        elapsed = _time_now_s() - last_event_wall_s
+                        if elapsed > self._poll_idle_timeout_s:
+                            logger.warning(
+                                "EnhancedWsFallback: WS idle for %.1fs — "
+                                "exiting WS stream to try polling.",
+                                elapsed,
+                            )
+                            return
+                        continue
+
+                    params = msg.get("params", {})
+                    result = params.get("result", {})
+                    value = result.get("value", {})
+
+                    # Drop errored transactions (err field is non-null)
+                    if value.get("err") is not None:
+                        continue
+
+                    signature = value.get("signature")
+                    if not signature:
+                        continue
+
+                    # Dedup
+                    if self._is_seen(signature):
+                        continue
+
+                    # Fetch the full transaction via RPC
+                    tx = await self._fetch_transaction(signature)
+                    if tx is not None:
+                        last_event_wall_s = _time_now_s()
+                        self._mark_seen(signature)
                         self._last_slot = tx.slot
                         yield tx
+
+                    # Idle check after processing
+                    elapsed = _time_now_s() - last_event_wall_s
+                    if elapsed > self._poll_idle_timeout_s:
+                        logger.warning(
+                            "EnhancedWsFallback: WS idle for %.1fs after processing — "
+                            "exiting WS stream to try polling.",
+                            elapsed,
+                        )
+                        return
+
+        except OSError as exc:
+            raise _WsConnectError(str(exc)) from exc
+        except Exception as exc:
+            # Re-raise websockets connection errors as _WsConnectError so the
+            # outer loop can distinguish connect-fail from stream errors.
+            ws_exc_names = {"ConnectionClosedError", "InvalidURI", "WebSocketException",
+                            "InvalidHandshake", "ConnectionRefusedError"}
+            if type(exc).__name__ in ws_exc_names:
+                raise _WsConnectError(str(exc)) from exc
+            raise
+        finally:
+            self._connected = False
+
+    # ------------------------------------------------------------------
+    # FALLBACK: RPC polling (getSignaturesForAddress + getTransaction)
+    # ------------------------------------------------------------------
+
+    async def _stream_poll(
+        self, program_ids: frozenset[str]
+    ) -> AsyncGenerator[RawTransaction, None]:
+        """Poll getSignaturesForAddress for each program ID; fetch new transactions.
+
+        Uses only standard JSON-RPC calls — works on any free-tier RPC key.
+        Runs for poll_idle_timeout_s then returns (caller re-enters the WS path).
         """
-        logger.warning(
-            "EnhancedWsFallback.subscribe() called on STUB. "
-            "PLUG_IN_HERE: wire websockets + logsSubscribe to %s",
-            self._ws_url,
+        logger.info(
+            "EnhancedWsFallback: entering RPC polling fallback "
+            "for %d program IDs (poll interval %.1fs).",
+            len(program_ids),
+            self._poll_interval_s,
         )
-        return
-        yield  # pragma: no cover
+        poll_end_s = _time_now_s() + self._poll_idle_timeout_s
+
+        while _time_now_s() < poll_end_s:
+            for pid in sorted(program_ids):
+                sigs = await self._get_signatures_for_address(pid)
+                for sig in sigs:
+                    if self._is_seen(sig):
+                        continue
+                    tx = await self._fetch_transaction(sig)
+                    if tx is not None:
+                        self._mark_seen(sig)
+                        self._last_slot = tx.slot
+                        yield tx
+                        # Reset idle timeout whenever we get a live result
+                        poll_end_s = _time_now_s() + self._poll_idle_timeout_s
+
+            await asyncio.sleep(self._poll_interval_s)
+
+        logger.info("EnhancedWsFallback: polling interval complete — returning to WS path.")
+
+    # ------------------------------------------------------------------
+    # RPC helpers (getTransaction, getSignaturesForAddress)
+    # ------------------------------------------------------------------
+
+    async def _fetch_transaction(self, signature: str) -> RawTransaction | None:
+        """Call getTransaction over HTTP RPC; map result → RawTransaction.
+
+        Returns None if the transaction is not found, errored, or failed to parse.
+        block_time_unix_s = getTransaction.blockTime (on-chain only; T-300a).
+        """
+        try:
+            import httpx
+        except ImportError as exc:
+            raise ImportError(
+                "httpx is required for EnhancedWsFallback RPC calls: "
+                "pip install httpx"
+            ) from exc
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": next(_ws_rpc_id),
+            "method": "getTransaction",
+            "params": [
+                signature,
+                {
+                    "maxSupportedTransactionVersion": 0,
+                    "commitment": "confirmed",
+                    "encoding": "jsonParsed",
+                },
+            ],
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(self._rpc_url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "EnhancedWsFallback._fetch_transaction(%s): HTTP error: %s", signature, exc
+            )
+            return None
+
+        result = data.get("result")
+        if result is None:
+            return None
+
+        return _parse_rpc_get_transaction(signature, result)
+
+    async def _get_signatures_for_address(self, program_id: str) -> list[str]:
+        """Call getSignaturesForAddress → list of signature strings (newest first)."""
+        try:
+            import httpx
+        except ImportError as exc:
+            raise ImportError("httpx is required: pip install httpx") from exc
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": next(_ws_rpc_id),
+            "method": "getSignaturesForAddress",
+            "params": [
+                program_id,
+                {
+                    "limit": self._poll_sig_limit,
+                    "commitment": "confirmed",
+                },
+            ],
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(self._rpc_url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "EnhancedWsFallback._get_signatures_for_address(%s): HTTP error: %s",
+                program_id, exc,
+            )
+            return []
+
+        results = data.get("result") or []
+        # Each item: {"signature": str, "slot": int, "err": null|{}, ...}
+        return [
+            item["signature"]
+            for item in results
+            if isinstance(item, dict)
+            and item.get("err") is None
+            and item.get("signature")
+        ]
+
+    # ------------------------------------------------------------------
+    # Dedup ring (memory-bounded)
+    # ------------------------------------------------------------------
+
+    def _is_seen(self, sig: str) -> bool:
+        return sig in self._seen_sigs
+
+    def _mark_seen(self, sig: str) -> None:
+        if sig in self._seen_sigs:
+            return
+        if len(self._seen_sigs_order) >= self._DEDUP_RING_MAX:
+            evict = self._seen_sigs_order.pop(0)
+            self._seen_sigs.discard(evict)
+        self._seen_sigs.add(sig)
+        self._seen_sigs_order.append(sig)
+
+
+# ---------------------------------------------------------------------------
+# _WsConnectError — internal sentinel for WS connection failures
+# ---------------------------------------------------------------------------
+
+class _WsConnectError(Exception):
+    """Raised by _stream_ws when the WS connection itself fails."""
+
+
+# ---------------------------------------------------------------------------
+# _time_now_s — wall-clock seconds helper (for internal timeout tracking only)
+# ---------------------------------------------------------------------------
+
+def _time_now_s() -> float:
+    return time.time()
+
+
+# ---------------------------------------------------------------------------
+# _parse_rpc_get_transaction — map jsonParsed getTransaction → RawTransaction
+# ---------------------------------------------------------------------------
+
+def _parse_rpc_get_transaction(
+    signature: str,
+    result: dict,
+) -> RawTransaction | None:
+    """Parse the JSON result of getTransaction (jsonParsed encoding) → RawTransaction.
+
+    Fields populated:
+      signature       — from the caller (not duplicated in result root)
+      slot            — result["slot"]
+      block_time_unix_s — result["blockTime"] (None if absent/null; T-300a)
+      fee_payer       — transaction.message.accountKeys[0].pubkey
+      instructions    — outer instructions from transaction.message.instructions
+      inner_instructions — meta.innerInstructions flattened
+      program_logs    — meta.logMessages
+      is_vote         — not present in jsonParsed; heuristic from program ID
+      err             — meta.err (None if null/absent)
+
+    POINT-IN-TIME CORRECTNESS (T-300a):
+      block_time_unix_s is taken from result["blockTime"] ONLY.
+      If blockTime is absent, null, or 0, it is set to None.
+      Wall-clock is NEVER substituted.
+
+    Returns None if the result is malformed (missing required fields).
+    """
+    if not isinstance(result, dict):
+        return None
+
+    slot = result.get("slot")
+    if slot is None:
+        return None
+    slot = int(slot)
+
+    # blockTime: on-chain unix timestamp (seconds). May be absent for recent slots.
+    # T-300a: if absent/null/0, set to None — decoder will hold event PENDING.
+    block_time_raw = result.get("blockTime")
+    block_time_unix_s: int | None = None
+    if block_time_raw is not None and int(block_time_raw) > 0:
+        block_time_unix_s = int(block_time_raw)
+
+    transaction = result.get("transaction") or {}
+    meta = result.get("meta") or {}
+
+    # err: non-null meta.err means the transaction failed — skip it
+    err_field = meta.get("err")
+    if err_field is not None:
+        return None
+
+    message = transaction.get("message") or {}
+    account_keys_raw = message.get("accountKeys") or []
+
+    # jsonParsed accountKeys: list of {"pubkey": str, "signer": bool, "writable": bool, ...}
+    # or for newer responses list of strings.
+    all_keys: list[str] = []
+    for ak in account_keys_raw:
+        if isinstance(ak, dict):
+            all_keys.append(ak.get("pubkey") or "")
+        elif isinstance(ak, str):
+            all_keys.append(ak)
+
+    fee_payer = all_keys[0] if all_keys else ""
+
+    # Outer instructions
+    instructions_raw = message.get("instructions") or []
+    instructions: list[RawInstruction] = []
+    for raw_ix in instructions_raw:
+        raw_ix_parsed = _parse_rpc_instruction(raw_ix, all_keys)
+        if raw_ix_parsed is not None:
+            instructions.append(raw_ix_parsed)
+
+    # Inner instructions (flattened)
+    inner_instructions: list[RawInstruction] = []
+    for inner_group in (meta.get("innerInstructions") or []):
+        for raw_ix in (inner_group.get("instructions") or []):
+            raw_ix_parsed = _parse_rpc_instruction(raw_ix, all_keys)
+            if raw_ix_parsed is not None:
+                inner_instructions.append(raw_ix_parsed)
+
+    # Program logs
+    program_logs: list[str] = list(meta.get("logMessages") or [])
+
+    # Vote heuristic: check if any instruction targets the Vote program
+    VOTE_PROGRAM = "Vote111111111111111111111111111111111111111"
+    is_vote = any(ix.program_id == VOTE_PROGRAM for ix in instructions)
+
+    return RawTransaction(
+        signature=signature,
+        slot=slot,
+        block_time_unix_s=block_time_unix_s,
+        fee_payer=fee_payer,
+        instructions=instructions,
+        inner_instructions=inner_instructions,
+        program_logs=program_logs,
+        is_vote=is_vote,
+        err=None,  # already filtered out errored txs above
+    )
+
+
+def _parse_rpc_instruction(
+    raw_ix: dict,
+    all_keys: list[str],
+) -> RawInstruction | None:
+    """Parse a single instruction from a jsonParsed getTransaction response.
+
+    Handles both parsed-format instructions (with `parsed` field) and raw-format
+    instructions (with `data` field in base58 or base64).
+
+    Returns None if the instruction cannot be usefully parsed.
+    """
+    if not isinstance(raw_ix, dict):
+        return None
+
+    import base64 as _base64
+
+    # programId may be a string (jsonParsed) or an index
+    program_id = raw_ix.get("programId") or ""
+    if not program_id:
+        # Fall back to programIdIndex if programId is absent
+        pid_idx = raw_ix.get("programIdIndex")
+        if pid_idx is not None and 0 <= int(pid_idx) < len(all_keys):
+            program_id = all_keys[int(pid_idx)]
+    if not program_id:
+        return None
+
+    # Instruction data: may be base58 (standard), base64, or "parsed" object
+    data_b64 = ""
+    if "data" in raw_ix and isinstance(raw_ix["data"], str):
+        raw_data = raw_ix["data"]
+        # Try to detect encoding: if it looks like base58, decode and re-encode as b64.
+        # jsonParsed encoding uses base58 for instruction data by default.
+        try:
+            data_bytes = _base58_decode(raw_data)
+            data_b64 = _base64.b64encode(data_bytes).decode("ascii")
+        except Exception:
+            # If base58 decode fails, treat as empty
+            data_b64 = ""
+    elif "parsed" in raw_ix:
+        # jsonParsed fully-decoded instruction (e.g. system program transfers).
+        # We cannot recover raw bytes from the parsed representation.
+        # Emit an empty data_b64; the decoder will see a discriminator mismatch
+        # and return None (correct — parsed system instructions are not venue events).
+        data_b64 = ""
+
+    # Account keys in this instruction
+    accounts_raw = raw_ix.get("accounts") or []
+    acct_keys: list[str] = []
+    for a in accounts_raw:
+        if isinstance(a, str):
+            acct_keys.append(a)  # jsonParsed gives pubkeys directly
+        elif isinstance(a, int):
+            acct_keys.append(all_keys[a] if 0 <= a < len(all_keys) else "")
+
+    return RawInstruction(
+        program_id=program_id,
+        data_b64=data_b64,
+        account_keys=acct_keys,
+        program_index=0,  # program index is not carried through jsonParsed
+    )
+
+
+# ---------------------------------------------------------------------------
+# Base58 decode — pure Python (symmetric with _bytes_to_base58 encoder)
+# ---------------------------------------------------------------------------
+
+_BASE58_DECODE_MAP: dict[int, int] = {
+    ch: i for i, ch in enumerate(_BASE58_ALPHABET)
+}
+
+
+def _base58_decode(s: str) -> bytes:
+    """Decode a base58-encoded string to bytes."""
+    n = 0
+    for char in s.encode("ascii"):
+        digit = _BASE58_DECODE_MAP.get(char)
+        if digit is None:
+            raise ValueError(f"Invalid base58 character: {char!r}")
+        n = n * 58 + digit
+
+    # Count leading '1's → leading zero bytes
+    leading_ones = len(s) - len(s.lstrip("1"))
+    result_bytes = n.to_bytes((n.bit_length() + 7) // 8, "big") if n > 0 else b""
+    return b"\x00" * leading_ones + result_bytes
 
 
 # ---------------------------------------------------------------------------

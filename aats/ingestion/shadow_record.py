@@ -275,7 +275,12 @@ async def _run(
     from aats.ingestion.decoders import InstructionRouter
     from aats.ingestion.registry import ProgramRegistry
     from aats.ingestion.store import InMemoryParquetBackend, PointInTimeStoreWriter, ShadowRecorder
-    from aats.ingestion.transport import GeyserTransport, ReplayTransport, TransportPipeline
+    from aats.ingestion.transport import (
+        EnhancedWsFallback,
+        GeyserTransport,
+        ReplayTransport,
+        TransportPipeline,
+    )
 
     # -- ProgramRegistry (offline — no live verification in demo mode) --
     registry = ProgramRegistry.from_allowlist(
@@ -332,8 +337,44 @@ async def _run(
             x_token=x_token,
             shredstream_endpoint=shredstream,
         )
+    elif source == "ws":
+        # Free-tier WS transport — standard Solana logsSubscribe + RPC polling fallback.
+        # Credentials come from environment ONLY, never hardcoded.
+        #
+        # WS URL precedence:
+        #   1. WS_ENDPOINT env var (explicit)
+        #   2. Derive from RPC_PRIMARY: replace https:// with wss://
+        # RPC URL: always RPC_PRIMARY (used for getTransaction + polling)
+        rpc_url = os.environ.get("RPC_PRIMARY", "")
+        ws_url = os.environ.get("WS_ENDPOINT", "")
+        if not ws_url and rpc_url:
+            # Derive WS URL from RPC_PRIMARY (https→wss, http→ws)
+            ws_url = rpc_url.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+
+        if not rpc_url:
+            logger.error(
+                "SOURCE=ws requires RPC_PRIMARY to be set in the environment.  "
+                "Example: RPC_PRIMARY=https://mainnet.helius-rpc.com/?api-key=<key>  "
+                "See .env.example for the full schema.  "
+                "Yielding nothing — set RPC_PRIMARY to use --source=ws."
+            )
+            # Build the transport anyway so the pipeline wires up cleanly;
+            # EnhancedWsFallback will log the error and yield nothing.
+
+        logger.info(
+            "SOURCE=ws — standard Solana WS + RPC fallback transport.  "
+            "WS endpoint configured: %s  RPC configured: %s",
+            "YES" if ws_url else "NO (polling-only mode)",
+            "YES" if rpc_url else "NO (will error)",
+        )
+        transport = EnhancedWsFallback(
+            ws_url=ws_url,
+            rpc_url=rpc_url,
+        )
     else:
-        raise ValueError(f"Unknown --source value: {source!r}.  Choose 'replay' or 'geyser'.")
+        raise ValueError(
+            f"Unknown --source value: {source!r}.  Choose 'replay', 'geyser', or 'ws'."
+        )
 
     pipeline = TransportPipeline(transport=transport, router=router)
 
@@ -467,11 +508,14 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--source",
-        choices=["replay", "geyser"],
+        choices=["replay", "geyser", "ws"],
         default="replay",
         help=(
             "replay = deterministic offline demo (SYNTHETIC data, default).  "
-            "geyser = live Geyser gRPC (requires GEYSER_ENDPOINT + GEYSER_TOKEN env)."
+            "geyser = live Geyser gRPC (requires GEYSER_ENDPOINT + GEYSER_TOKEN env).  "
+            "ws = standard Solana logsSubscribe WS + RPC polling fallback "
+            "(requires RPC_PRIMARY; WS_ENDPOINT optional, derived from RPC_PRIMARY if absent). "
+            "Works on a free-tier Helius RPC key — no paid gRPC needed."
         ),
     )
     parser.add_argument(
@@ -546,7 +590,14 @@ def main() -> None:
     if args.source == "replay":
         logger.info(
             "DEMONSTRATION MODE: synthetic transactions derived from test fixtures.  "
-            "For real edge data use --source=geyser with a live node."
+            "For real edge data use --source=geyser or --source=ws with a live node."
+        )
+    elif args.source == "ws":
+        logger.info(
+            "WS MODE: standard Solana logsSubscribe WebSocket + RPC polling fallback.  "
+            "Requires RPC_PRIMARY env var (e.g. https://mainnet.helius-rpc.com/?api-key=<key>).  "
+            "WS_ENDPOINT is derived from RPC_PRIMARY if not explicitly set.  "
+            "DRY RUN ALWAYS: this module is READ-ONLY (no signing, no capital)."
         )
 
     stats = asyncio.run(
