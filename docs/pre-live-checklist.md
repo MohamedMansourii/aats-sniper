@@ -90,6 +90,12 @@ enforces them**. The ≤-float blast-radius guarantee does not exist in code yet
 
 - [ ] **Real image digests** (F-10). `docker/Dockerfile.signer` (and Prometheus/Grafana/Alertmanager
       `@sha256:placeholder` pins) replaced with **real** digests. A placeholder cannot ship live.
+- [ ] **Operator: restore real verified base-image digests** (F-10, operator action). For each base
+      image run `docker pull <image>` then `docker inspect --format '{{index .RepoDigests 0}}' <image>`
+      and pin the resulting `<image>@sha256:<digest>` across **all 7** `docker/Dockerfile.*`
+      (`bot`, `controlplane`, `dashboard`, `dms`, `hotcore`, `signer`, `telegram`) **and**
+      `docker-compose.yml` before `DRY_RUN_ENABLED=false`. Cross-ref the F-10 digest item above; see
+      `docs/operator-onboarding.md §7`.
 - [ ] **Signer container locked down** (F-07). `cap_drop:[ALL]` + `cap_add:[IPC_LOCK]` (required for
       `mlock`), `no-new-privileges`, read-only rootfs + tmpfs `/run`, socket-only/isolated network.
 
