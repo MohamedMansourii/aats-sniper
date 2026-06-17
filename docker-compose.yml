@@ -198,6 +198,12 @@ services:
       <<: *common-env
       CEO_AUTH_TOKEN: "${CEO_AUTH_TOKEN:-}"
       METRICS_PORT: "9103"
+      # E4 NOTE: inside the container the control plane MUST bind 0.0.0.0 so
+      # Docker's port mapping (8787:8787) can forward host traffic to the process.
+      # The process emits a SECURITY WARNING on non-loopback binds by design
+      # (app.py resolve_bind_host). This is the compose-only container bind;
+      # bare-metal / reverse-proxy deployments keep the default 127.0.0.1.
+      CONTROL_PLANE_BIND_HOST: "0.0.0.0"
     ports:
       - "8787:8787"
     expose:
@@ -274,16 +280,23 @@ services:
 
   # ── dashboard — static operator UI ────────────────────────────────────────
   # Built as a Vite static bundle served by nginx.
-  # VITE_USE_MOCK=true (default) — builds and runs on mock data without the control plane.
-  # For live wiring: set VITE_USE_MOCK=false and VITE_CONTROL_PLANE_URL=http://aats-controlplane:8787
-  # (or the host-routable address if the browser reaches the API directly).
-  # NFR-011 / AC-049: the dashboard MUST build green on mock. This is the default.
+  # LIVE by default under compose: VITE_USE_MOCK=false wires the deck to the
+  # control plane so `docker compose up` gives a live operator deck.
+  # VITE_CONTROL_PLANE_URL=http://localhost:8787 is the HOST-mapped port: the UI
+  # is static and runs in the operator's BROWSER (on the host), so it reaches the
+  # control-plane API at the published host port 8787 — NOT the in-network service
+  # name aats-controlplane (which is unresolvable from the browser). The
+  # control-plane service publishes 8787:8787 above.
+  # Override to mock for an offline/standalone image with: VITE_USE_MOCK=true.
+  # NFR-011 / AC-049: the dashboard MUST build green — the live build is verified
+  # green. Paper-only: the server keeps DRY_RUN_ENABLED=true by default and the
+  # operator surface is de-risk only (AC-060); the dashboard cannot enable capital.
   dashboard:
     build:
       context: .
       dockerfile: docker/Dockerfile.dashboard
       args:
-        VITE_USE_MOCK: "${VITE_USE_MOCK:-true}"
+        VITE_USE_MOCK: "${VITE_USE_MOCK:-false}"
         VITE_CONTROL_PLANE_URL: "${VITE_CONTROL_PLANE_URL:-http://localhost:8787}"
     restart: unless-stopped
     ports:
@@ -291,12 +304,17 @@ services:
     networks:
       - aats-internal
     depends_on:
-      # service_started (not service_healthy): the dashboard serves mock data even when
-      # the control plane is still starting. For live mode the browser will retry SSE.
+      # service_started (not service_healthy): the static bundle is served by nginx
+      # regardless of control-plane readiness. In the default LIVE mode the browser
+      # fetches/streams /api/* against the host-mapped control plane and retries SSE
+      # until it is healthy — so the deck loads immediately and wires up live as the
+      # control plane comes up.
       aats-controlplane:
         condition: service_started
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      # Use 127.0.0.1 explicitly: BusyBox wget resolves 'localhost' to ::1 first
+      # (IPv6) which fails since nginx listens on 0.0.0.0 (IPv4) only.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
       interval: 10s
       timeout: 3s
       retries: 5

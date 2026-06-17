@@ -231,12 +231,23 @@ def main() -> None:  # pragma: no cover - process entrypoint
     signal.signal(signal.SIGTERM, service.request_stop)
     signal.signal(signal.SIGINT, service.request_stop)
 
+    # Start /health + /metrics HTTP server on METRICS_PORT so the compose
+    # healthcheck (python -c "urllib.request.urlopen('http://localhost:9106/health')")
+    # can confirm the watchdog process is alive.
+    metrics_port = int(os.environ.get("METRICS_PORT", "9106"))
+    try:
+        from aats.telemetry.http_endpoint import run_metrics_server
+
+        run_metrics_server(port=metrics_port)
+    except Exception:  # noqa: BLE001 — non-fatal; watchdog runs regardless
+        pass
+
     mode = "DRY-RUN (real capital disabled)" if config.dry_run else "LIVE"
     # structlog/Prometheus wiring is the telemetry layer's job; a single stderr
     # line at boot is fine and carries NO secret.
     print(  # noqa: T201 - boot banner only
         f"[aats-dms] watchdog up: T_DMS={config.t_dms_seconds:.0f}s mode={mode} "
-        f"heartbeat_key={config.heartbeat_key}",
+        f"heartbeat_key={config.heartbeat_key} metrics_port={metrics_port}",
         flush=True,
     )
     service.run_forever()

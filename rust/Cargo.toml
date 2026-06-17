@@ -4,3 +4,14 @@ members = [
     "aats-hotcore",
     "aats-signer",
 ]
+
+# Profiles must be at the workspace root — per-crate profile sections are ignored.
+# hotcore needs: opt-level=3, lto=thin, codegen-units=1
+# signer needs:  opt-level=3, lto=thin, codegen-units=1, panic=abort
+# panic=abort is the stricter signer requirement; applying it workspace-wide is safe
+# for these scaffold binaries (no std::panic::catch_unwind used anywhere).
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"

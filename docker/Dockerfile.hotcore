@@ -32,7 +32,7 @@ LABEL org.opencontainers.image.title="aats-hotcore"
 LABEL org.opencontainers.image.description="AATS SNIPE+FAST hot core (Rust)"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 \
+    ca-certificates libssl3 wget \
     && rm -rf /var/lib/apt/lists/* \
     && adduser --disabled-password --gecos "" --uid 1000 aats
 

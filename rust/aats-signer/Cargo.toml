@@ -2,7 +2,7 @@
 name = "aats-signer"
 version = "0.1.0"
 edition = "2021"
-description = "AATS minimal-surface signer (ADR-0009, infrastructure.md §5)"
+description = "AATS minimal-surface signer (ADR-0009, infrastructure.md §5) — scaffold placeholder"
 
 # SECURITY CONTRACT (ADR-0009, infrastructure.md §5.1):
 #   This crate is the ONLY holder of the wallet secret.
@@ -11,46 +11,32 @@ description = "AATS minimal-surface signer (ADR-0009, infrastructure.md §5)"
 #       sign(unsigned_tx_bytes, wallet_id) -> signed_tx_bytes
 #   Socket is file-permission + peer-credential gated.
 #
-# Three independent refusals (infrastructure.md §5.2, implemented in T-251):
-#   1. Per-tx + rolling-aggregate SOL spend cap (0.1 SOL / 0.5 SOL)
-#   2. Full enumerated program-ID allowlist
-#   3. System-program transfer destination pinned to 8 Jito tip accounts
+# SCAFFOLD NOTE:
+#   The real signing/Vault/mlock logic is NOT yet implemented.
+#   This binary is a minimal long-running scaffold that:
+#     - Logs a clear "scaffold placeholder" message at startup
+#     - Serves GET /health -> 200 on METRICS_PORT (default 9105)
+#     - Loops forever so the container stays UP
+#   Real implementation: T-251 / T-352a (crypto-security-engineer).
 #
-# Secret handling (infrastructure.md §5.3):
-#   - Wallet secret fetched via Vault short-lived token at boot.
-#   - Held in mlock-able memory; zeroized on process exit.
-#   - NEVER placed in a static env var; .env field is a Vault ref only.
+# REMOVED DEPS (were declared but unused in scaffold):
+#   solana-sdk  — unused by scaffold
+#   zeroize     — unused by scaffold (no secret to zeroize)
+#   prometheus  — unused by scaffold
+#   reqwest     — unused by scaffold (no Vault calls yet)
+#   serde / serde_json — unused by scaffold
+#   tracing / tracing-subscriber — unused by scaffold
+#
+# KEPT: tokio (async runtime) + hyper stack (HTTP /health endpoint for future healthcheck)
 
 [[bin]]
 name = "aats-signer"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-
-# Solana signing primitives
-solana-sdk = "1.18"
-
-# Secret hygiene
-zeroize = { version = "1.7", features = ["derive"] }
-
-# Prometheus metrics (minimal — just heartbeat + sign-count)
-prometheus = "0.13"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }
 hyper = { version = "1", features = ["http1", "server"] }
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 
-# Vault client (short-lived token fetch at boot)
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-
-# Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["json"] }
-
-[profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-panic = "abort"  # minimize surface area
+# [profile.release] moved to workspace root Cargo.toml (per-crate profiles are ignored).

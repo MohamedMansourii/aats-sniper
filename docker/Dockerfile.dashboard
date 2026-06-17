@@ -1,10 +1,21 @@
 # AATS — dashboard service Dockerfile
 # Builds the React/Vite operator UI and serves it as static files.
-# VITE_USE_MOCK=true (default) — runs standalone on mock data.
-# When wired to the control plane, set VITE_USE_MOCK=false and
-# VITE_CONTROL_PLANE_URL via environment at build time (or via nginx proxy).
 #
-# NFR-011 / AC-049: dashboard MUST build green on mock. This image enforces it.
+# DEFAULT FOR THIS IMAGE = LIVE control plane (not mock):
+#   VITE_USE_MOCK=false
+#   VITE_CONTROL_PLANE_URL=http://localhost:8787
+# Rationale: `docker compose up` must hand the operator a LIVE deck wired to the
+# host-mapped control-plane (8787 is the host-published port — the browser, which
+# runs on the host, reaches the API there, NOT at the in-network service name).
+# Both build args are overridable via --build-arg / docker-compose build.args.
+#
+# The npm/standalone default stays MOCK and is UNAFFECTED by this file: `npm run
+# dev`/`npm run build` with no env set resolves USE_MOCK=true in src/lib/api.ts
+# (VITE_USE_MOCK !== "false"). Only this container build opts into live.
+#
+# NFR-011 / AC-049: dashboard MUST build green — the live build is verified green
+# (paper-only: DRY_RUN default true server-side; the operator surface is de-risk
+# only and cannot enable real capital). This image enforces a green build.
 
 # ── Stage 1: Node build ────────────────────────────────────────────────────
 FROM node:20.14.0-slim AS node-builder
@@ -18,9 +29,11 @@ RUN npm ci --ignore-scripts
 # Copy source
 COPY dashboard/ ./
 
-# Build with mock as the default (NFR-011)
-# VITE_CONTROL_PLANE_URL can be overridden at build time via --build-arg
-ARG VITE_USE_MOCK=true
+# Build LIVE by default for this image — wired to the host-mapped control plane.
+# Both args are overridable at build time via --build-arg (compose passes them).
+#   VITE_USE_MOCK=false              → src/lib/api.ts USE_MOCK resolves false
+#   VITE_CONTROL_PLANE_URL=...:8787  → browser (on host) reaches the published API
+ARG VITE_USE_MOCK=false
 ARG VITE_CONTROL_PLANE_URL=http://localhost:8787
 ENV VITE_USE_MOCK=${VITE_USE_MOCK}
 ENV VITE_CONTROL_PLANE_URL=${VITE_CONTROL_PLANE_URL}
@@ -33,7 +46,9 @@ FROM nginx:1.27.0-alpine AS runtime
 LABEL org.opencontainers.image.title="aats-dashboard"
 LABEL org.opencontainers.image.description="AATS operator dashboard (Vite static, served via nginx)"
 
-COPY --from=node-builder /app/dist /usr/share/nginx/html
+# vite.config.ts sets outDir: "dist/public" — copy that subdirectory as the
+# nginx root so index.html lands at /usr/share/nginx/html/index.html.
+COPY --from=node-builder /app/dist/public /usr/share/nginx/html
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 3000

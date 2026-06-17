@@ -1,6 +1,20 @@
 # AATS STATUS — rolled-up
 
-_Last updated: 2026-06-17 by `orchestrator` (**✅ ENHANCEMENT PROGRAM E1–E13 COMPLETE — `05-reports/gates/ENH-COMPLETE.md`. THE WHOLE ENGAGEMENT IS DONE
+_Last updated: 2026-06-17 by `orchestrator` (**✅ RUNTIME COMPLETION — `docker compose up` NOW ACTUALLY RUNS THE PAPER STACK — `05-reports/gates/RUNTIME-compose-up.md`.**
+The G5/G6 "ONE `docker compose up`" claim had been recorded on `docker compose config` exit 0 (a static parse) — the stack had **never been brought up** and **did not start**.
+Fixed and **VERIFIED BY EXECUTION**: 3 structural gaps + 7 runtime root causes. (1) **RUST-build** (dual G3 PASS) — both Rust crates were unbuildable (declared the
+non-existent `ort=1.19`); rewrote `aats-hotcore`/`aats-signer` as honest minimal `tokio`+`hyper` scaffolds serving `GET /health` on their `METRICS_PORT`, paper-only, no
+submit/keys. (2) **RUNNER** (dual G3 PASS, 2 independent QA re-runs) — `aats.controller` had no `__main__`; added a real entrypoint running the SNIPE/FAST/SLOW loop vs
+`SimulationVenue` (no network), `DRY_RUN_ENABLED` hard-gate, Redis-from-env w/ in-memory fallback, all events SYNTHETIC-labelled; suite **2310 passed / 2 skipped**.
+(3) **WIRE** (G3 PASS) — docker dashboard now builds LIVE by default (`VITE_USE_MOCK=false`, control plane at 8787); standalone stays mock. Plus 7 bring-up fixes
+(websockets 12→10.4 dep conflict; missing `aats.telegram_bot` scaffold; `/health` added to DMS+slow-loop; `CONTROL_PLANE_BIND_HOST=0.0.0.0`; nginx healthcheck IPv6 fix;
+dashboard COPY path `dist/public/`; alertmanager `${VAR}` → null routing). **RESULT: `docker compose up` brings up all 11 services — 9 healthy, signer up-by-design
+(no healthcheck, distroless), dashboard reachable + wired to a LIVE control plane with active SIM activity.** **HONEST scope:** live = SIMULATED activity on SYNTHETIC data
+(`SimulationVenue`, `synthetic=True`, PAPER-ONLY labels) — NOT a live trading system. **Stage 2 (real Geyser/RPC ingestion) is NOT built;** edge stays
+`UNPROVEN-NO-REAL-DATA`; real capital `DRY_RUN_ENABLED=true` + UNREACHABLE. Remaining (non-blocking, R3/future-task): signer healthcheck deferred to T-352a; split
+in-memory state → `/api/positions` `[]` on standalone control plane (T-340 Redis-wiring); alertmanager null routing until R3 credentials; node image bump (Vite wants
+≥20.19.0) before R3. No regression to the accepted core; breaker/survivable-stop/DMS untouched + present. Prior:
+**✅ ENHANCEMENT PROGRAM E1–E13 COMPLETE — `05-reports/gates/ENH-COMPLETE.md`. THE WHOLE ENGAGEMENT IS DONE
 (core build G0–G6 ACCEPTED + the E1–E13 enhancement program CLOSED).** Close-out ledger across all 4 waves, verified from the ACTUAL changed files under
 `C:/dev/aats` (not the handoff/review JSON): **13/13 enhancements + 4/4 audits cleared — 16 ADDED · 1 COVERED (E8) · 0 FAILED.** Every dual-G3-gated item PASS;
 no regression to the accepted core. **Ledger:** E1 ADDED (devnet submit, BLOCKER fixed) · E2 ADDED (denylist STEP-0) · E3 ADDED (`GET /api/candidates`+page) ·
@@ -357,6 +371,19 @@ a 3-strikes task: if att.3 then fails dual G3 → CEO escalation.
 
 ## Current stage
 
+**✅ RUNTIME COMPLETION — `docker compose up` ACTUALLY RUNS THE PAPER STACK.** Record: `05-reports/gates/RUNTIME-compose-up.md`.
+The deployment was previously recorded "deployable" on `docker compose config` exit 0 (a static parse) — but the stack had **never been brought up and did not start**.
+That gap is now closed and **verified by execution**: 3 structural gaps (unbuildable Rust crates declaring the non-existent `ort=1.19`; no `aats.controller.__main__`;
+missing `/health` endpoints) + 7 bring-up root causes were fixed. **RUST-build** (dual G3 PASS) and **RUNNER** (dual G3 PASS, 2 independent QA re-runs; suite 2310 passed /
+2 skipped) landed the buildable hotcore/signer scaffolds and a real controller entrypoint; **WIRE** (G3 PASS) flipped the docker dashboard to LIVE by default.
+**`docker compose up` now brings up all 11 services** — 9 healthy, `aats-signer` up-by-design (distroless, no healthcheck → deferred to T-352a), dashboard reachable
+and wired to a LIVE control plane showing active SIM activity. **HONEST scope:** live = SIMULATED activity on SYNTHETIC data (`SimulationVenue`, no network path, every
+launch/position labelled `SYNTHETIC` / PAPER-ONLY) — this is a paper/simulation deployment, **NOT a live trading system**. **Stage 2 (real Geyser/RPC on-chain ingestion)
+is NOT built**, edge stays `UNPROVEN-NO-REAL-DATA`, and real capital is `DRY_RUN_ENABLED=true` + UNREACHABLE. **Remaining (none block paper bring-up; all R3/future-task):**
+(1) signer healthcheck deferred to T-352a (COND-G4-2 / ADR-0009); (2) `aats-slow` and `aats-controlplane` run separate in-memory stores so standalone `/api/positions`
+returns `[]` (positions ARE in the runner logs) — real Redis-backed sharing is the T-340 wiring task; (3) alertmanager null routing until R3 credentials; (4) bump
+`node:20.14.0-slim` (Vite 7.3.0 wants ≥20.19.0) before R3. No regression to the accepted core; breaker/survivable-stop/DMS untouched + present; the R3 pre-live checklist
+(Block A/B/C) remains the gate before `DRY_RUN_ENABLED=false`. Prior:
 **✅ ENGAGEMENT CLOSED — ENHANCEMENT PROGRAM E1–E13 COMPLETE.** Record: `05-reports/gates/ENH-COMPLETE.md`. The core build G0–G6 is ACCEPTED and the post-G6
 E1–E13 enhancement program (4 waves, AUDIT-FIRST, ADDITIVE) is now CLOSED: **13/13 enhancements + 4/4 audits cleared — 16 ADDED · 1 COVERED (E8) · 0 FAILED**, verified
 across all four waves by reading the ACTUAL changed files (not the handoff/review JSON), every dual-G3-gated item PASS, **no regression to the accepted core**. Wave 4

@@ -1,8 +1,17 @@
 /**
- * AATS Sniper — mock data layer.
- * A realistic, lightly-evolving stream of operator telemetry so the dashboard
- * runs standalone (npm run dev) with NO backend. All display numbers are
- * rounded at the source via the round() helpers below.
+ * AATS Sniper — mock data layer.  *** SYNTHETIC — NOT REAL EDGE DATA ***
+ *
+ * Every value produced here (snipe launches, fills, MCS/sentiment scores,
+ * predictions, latency, positions) is a SYNTHETIC, randomly-generated fake.
+ * It exists ONLY so the dashboard runs standalone (npm run dev / mock build)
+ * with NO backend. It reflects NO real market, NO real model output, and NO
+ * real trading edge. Do not read any signal, performance, or win-rate into it.
+ *
+ * This generator is the standalone DEFAULT only. The docker image and
+ * `docker compose up` build LIVE (VITE_USE_MOCK=false) and bypass this file
+ * entirely, fetching real operator telemetry from the control plane instead.
+ *
+ * All display numbers are rounded at the source via the round() helpers below.
  */
 
 import type {
