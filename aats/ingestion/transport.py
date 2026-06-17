@@ -176,7 +176,7 @@ class GeyserTransport(TransportInterface):
     def __init__(
         self,
         endpoint: str,  # env: GEYSER_ENDPOINT — never a literal in code
-        x_token: str,   # env: GEYSER_X_TOKEN — never hardcoded
+        x_token: str,   # env: GEYSER_TOKEN (canonical) — never hardcoded
         shredstream_endpoint: str | None = None,  # env: SHREDSTREAM_ENDPOINT
     ) -> None:
         super().__init__()
