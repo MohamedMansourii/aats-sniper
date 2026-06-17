@@ -47,6 +47,7 @@ import logging
 import struct
 import time
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
 from aats.contracts.events import (
@@ -58,6 +59,52 @@ from aats.contracts.events import (
 from aats.ingestion.registry import ProgramRegistry
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# EventKind — discriminates create/init events from trade events.
+#
+# This enum lives in M1 (decoders) and is NOT part of the frozen LaunchEvent
+# contract (data-models.md §2).  It is M1-internal metadata that the
+# ShadowRecorder uses to gate window-opening.  Downstream consumers (feature-
+# quant, NLP) receive the LaunchEvent unchanged; EventKind is a sidecar.
+#
+# CONTRACT LAW: LaunchEvent is frozen (data-models.md §2, ADR-only changes).
+# EventKind adds discriminator semantics WITHOUT touching LaunchEvent fields.
+# ---------------------------------------------------------------------------
+
+
+class EventKind(StrEnum):
+    """Discriminates the lifecycle phase of a decoded on-chain event.
+
+    CREATE / INIT — a genuine new-token launch.  These are the ONLY events
+        that may open a new ShadowRecorder window.
+    BUY / SELL / SWAP — trade events.  If a window is already open for the
+        mint, these are attributed to it.  If no window is open, they are
+        orphans: counted by metric but no window is opened.
+    WITHDRAW — bonding-curve completion (pump.fun migration trigger).
+        Highest-value signal.  Opens a window (it IS a creation event for
+        the migration sniper thesis EH-003).
+    UNKNOWN — fallback; treated as non-create (no window opened).
+    """
+
+    CREATE = "create"       # pump.fun bonding-curve create
+    BUY = "buy"             # pump.fun / PumpSwap buy
+    SELL = "sell"           # pump.fun / PumpSwap sell
+    SWAP = "swap"           # PumpSwap / Raydium swap (generic)
+    WITHDRAW = "withdraw"   # pump.fun bonding-curve completion → migration
+    INIT = "init"           # Raydium v4 initialize2 / CPMM initialize / PumpSwap create_pool
+    UNKNOWN = "unknown"     # could not determine
+
+
+# The set of EventKinds that are allowed to OPEN a new snapshot window.
+# A buy/sell/swap/unknown arriving before a CREATE/INIT for that mint
+# is an orphan — it is counted but does NOT open a window.
+WINDOW_OPENING_KINDS: frozenset[EventKind] = frozenset({
+    EventKind.CREATE,
+    EventKind.WITHDRAW,
+    EventKind.INIT,
+})
 
 # ---------------------------------------------------------------------------
 # Raw transaction structure (transport-agnostic input to decoders)
@@ -265,7 +312,7 @@ class _DecoderProtocol(Protocol):
         self,
         tx: RawTransaction,
         transport: DetectionTransport,
-    ) -> LaunchEvent | None: ...
+    ) -> tuple[LaunchEvent, EventKind] | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -292,11 +339,12 @@ class PumpFunDecoder:
         self,
         tx: RawTransaction,
         transport: DetectionTransport,
-    ) -> LaunchEvent | None:
+    ) -> tuple[LaunchEvent, EventKind] | None:
         """Attempt to decode the transaction as a pump.fun event.
 
-        Returns the most significant event in the transaction (prefer MIGRATION
-        over BUY/SELL; prefer BUY over SELL).  Returns None if not a pump.fun tx.
+        Returns (LaunchEvent, EventKind) for the most significant event in the
+        transaction (prefer MIGRATION over BUY/SELL; prefer BUY over SELL).
+        Returns None if not a pump.fun tx.
         """
         pid = self._program_id()
         if pid is None:
@@ -310,25 +358,25 @@ class PumpFunDecoder:
         for ix in pump_ixs:
             ev = self._try_withdraw(ix, tx, transport)
             if ev is not None:
-                return ev
+                return ev, EventKind.WITHDRAW
 
         # Then create
         for ix in pump_ixs:
             ev = self._try_create(ix, tx, transport)
             if ev is not None:
-                return ev
+                return ev, EventKind.CREATE
 
         # Then buy
         for ix in pump_ixs:
             ev = self._try_buy(ix, tx, transport)
             if ev is not None:
-                return ev
+                return ev, EventKind.BUY
 
         # Then sell
         for ix in pump_ixs:
             ev = self._try_sell(ix, tx, transport)
             if ev is not None:
-                return ev
+                return ev, EventKind.SELL
 
         return None
 
@@ -528,7 +576,7 @@ class PumpSwapDecoder:
         self,
         tx: RawTransaction,
         transport: DetectionTransport,
-    ) -> LaunchEvent | None:
+    ) -> tuple[LaunchEvent, EventKind] | None:
         pid = self._program_id()
         if pid is None:
             return None
@@ -537,16 +585,16 @@ class PumpSwapDecoder:
         if not ixs:
             return None
 
-        # Pool creation has priority over swaps
+        # Pool creation has priority over swaps (INIT opens a window)
         for ix in ixs:
             ev = self._try_create_pool(ix, tx, transport)
             if ev is not None:
-                return ev
+                return ev, EventKind.INIT
 
         for ix in ixs:
             ev = self._try_swap(ix, tx, transport)
             if ev is not None:
-                return ev
+                return ev, EventKind.SWAP
 
         return None
 
@@ -671,7 +719,7 @@ class RaydiumV4Decoder:
         self,
         tx: RawTransaction,
         transport: DetectionTransport,
-    ) -> LaunchEvent | None:
+    ) -> tuple[LaunchEvent, EventKind] | None:
         pid = self._program_id()
         if pid is None:
             return None
@@ -683,12 +731,12 @@ class RaydiumV4Decoder:
         for ix in ixs:
             ev = self._try_init2(ix, tx, transport)
             if ev is not None:
-                return ev
+                return ev, EventKind.INIT
 
         for ix in ixs:
             ev = self._try_swap(ix, tx, transport)
             if ev is not None:
-                return ev
+                return ev, EventKind.SWAP
 
         return None
 
@@ -837,7 +885,7 @@ class RaydiumCpmmDecoder:
         self,
         tx: RawTransaction,
         transport: DetectionTransport,
-    ) -> LaunchEvent | None:
+    ) -> tuple[LaunchEvent, EventKind] | None:
         pid = self._program_id()
         if pid is None:
             return None
@@ -849,12 +897,12 @@ class RaydiumCpmmDecoder:
         for ix in ixs:
             ev = self._try_initialize(ix, tx, transport)
             if ev is not None:
-                return ev
+                return ev, EventKind.INIT
 
         for ix in ixs:
             ev = self._try_swap(ix, tx, transport)
             if ev is not None:
-                return ev
+                return ev, EventKind.SWAP
 
         return None
 
@@ -1001,11 +1049,15 @@ class InstructionRouter:
         self,
         tx: RawTransaction,
         transport: DetectionTransport,
-    ) -> LaunchEvent | None:
-        """Decode a transaction to a LaunchEvent.
+    ) -> tuple[LaunchEvent, EventKind] | None:
+        """Decode a transaction to a (LaunchEvent, EventKind) pair.
 
         Returns None if no registered decoder matches.
         Skips vote transactions and failed transactions.
+
+        The EventKind discriminates window-opening events (CREATE, WITHDRAW,
+        INIT) from trade events (BUY, SELL, SWAP).  The ShadowRecorder uses
+        this to ensure only genuine launches open snapshot windows.
         """
         if tx.is_vote or tx.err is not None:
             return None
@@ -1017,9 +1069,9 @@ class InstructionRouter:
 
         for decoder in self._decoders:
             try:
-                ev = decoder.decode(tx, transport)
-                if ev is not None:
-                    return ev
+                result = decoder.decode(tx, transport)
+                if result is not None:
+                    return result
             except Exception as exc:
                 logger.warning(
                     "Decoder %s raised on tx %s: %s",

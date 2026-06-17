@@ -77,7 +77,7 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import Any
 
 from aats.contracts.events import DetectionTransport
 from aats.ingestion.decoders import RawInstruction, RawTransaction
@@ -1461,7 +1461,7 @@ class TransportPipeline:
     def __init__(
         self,
         transport: TransportInterface,
-        router: "InstructionRouter",
+        router: Any,
     ) -> None:
         self._transport = transport
         self._router = router
@@ -1471,26 +1471,31 @@ class TransportPipeline:
         self,
         last_slot: int = 0,
     ) -> AsyncGenerator[tuple, None]:
-        """Yield (LaunchEvent, tx_signature) for every matched transaction.
+        """Yield (LaunchEvent, tx_signature, EventKind) for every matched transaction.
 
         Args:
             last_slot: resume from this slot (Geyser from_slot; replay skip).
 
         Yields:
-            (LaunchEvent, tx_signature) — the event and its source tx signature
-            for dedup tracking.
-        """
-        from aats.ingestion.decoders import InstructionRouter as _Router
+            (LaunchEvent, tx_signature, EventKind) — the event, its source tx
+            signature for dedup tracking, and the event kind for window-gating.
 
+        BACKWARD COMPATIBILITY NOTE:
+            Callers that only unpack 2 values (ev, sig) will continue to work
+            via Python tuple unpacking; the third element is simply ignored.
+            The ShadowRecorder now requires the EventKind to gate window-opening
+            on genuine launch events only (T-LAUNCH-FILTER requirement 1-2).
+        """
         program_ids = self._router._active_pids
         async for tx in self._transport.subscribe(program_ids, last_slot):
             try:
-                ev = self._router.route(tx, self._transport.detection_transport)
-                if ev is not None:
+                result = self._router.route(tx, self._transport.detection_transport)
+                if result is not None:
+                    ev, kind = result
                     self.stats.events_decoded += 1
                     self.stats.last_event_time_ms = ev.event_time.block_time_ms
                     self.stats.last_slot = tx.slot
-                    yield ev, tx.signature
+                    yield ev, tx.signature, kind
                 else:
                     self.stats.events_skipped += 1
             except Exception as exc:

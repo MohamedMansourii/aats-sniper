@@ -518,6 +518,18 @@ class ShadowRecorder:
     collects all LaunchEvents for each observed mint over the first K slots.
     At slot +K, it flushes the snapshot to the replayable recorded dataset.
 
+    WINDOW-OPENING RULE (T-LAUNCH-FILTER, requirement 1-2):
+      A new snapshot window is opened ONLY by a genuine launch-creation event:
+        - EventKind.CREATE  (pump.fun bonding-curve token create)
+        - EventKind.WITHDRAW (pump.fun migration — EH-003)
+        - EventKind.INIT    (Raydium v4 initialize2 / CPMM initialize / PumpSwap create_pool)
+
+      BUY / SELL / SWAP events:
+        - If a window is already open for the mint → attributed to that window
+          (first-K-slot microstructure is the desired signal).
+        - If NO window is open for the mint → orphan, counted in
+          `orphan_events_total` metric, NOT recorded as a launch.
+
     The dataset is directly replayable by ReplayTransport (transport.py):
       transport = ReplayTransport(snapshot.to_raw_transactions())
 
@@ -537,19 +549,65 @@ class ShadowRecorder:
         self._max_open_windows = max_open_windows
         # mint -> ShadowSnapshot (accumulating)
         self._open: dict[str, ShadowSnapshot] = {}
+        # Orphan counter: buy/sell/swap events with no open window.
+        # Exposed as a metric so operators can see how many trade events
+        # arrived before (or without) a matching create/init event.
+        self._orphan_events_total: int = 0
 
-    def observe(self, event: LaunchEvent) -> None:
+    @property
+    def orphan_events_total(self) -> int:
+        """Count of buy/sell/swap events received with no matching open window.
+
+        An orphan event is a trade event for a mint that has not yet had a
+        CREATE/INIT/WITHDRAW event.  The event is NOT recorded as a launch.
+        This metric surfaces when the ingest corpus is contaminated with
+        pre-existing-token activity (the bug T-LAUNCH-FILTER fixes).
+        """
+        return self._orphan_events_total
+
+    def observe(
+        self,
+        event: LaunchEvent,
+        event_kind: Any | None = None,
+    ) -> None:
         """Record an event into the appropriate snapshot window.
 
-        - If this is the first event for the mint, open a new window.
-        - If within K slots of the window open, append to the window.
-        - If past K slots, flush the completed window.
-        - If the window overflows max_open_windows, CENSOR and flush oldest.
+        Window-opening is gated on event_kind (T-LAUNCH-FILTER requirement 1):
+          - CREATE / WITHDRAW / INIT → opens a new window if none exists.
+          - BUY / SELL / SWAP        → attributed if a window exists; else orphan.
+          - None (legacy callers)    → treated as a CREATE for backward compatibility
+            (the old behaviour: any event opens a window).
+
+        Args:
+            event:      The decoded LaunchEvent.
+            event_kind: The EventKind discriminator.  Pass from the router result.
+                        If None (backward-compat), the window is opened unconditionally
+                        — this preserves behaviour for unit tests that do not yet pass
+                        event_kind (they test other aspects of ShadowRecorder).
         """
+        # Import here to avoid circular imports at module load time.
+        from aats.ingestion.decoders import WINDOW_OPENING_KINDS
+
         mint = event.mint
         slot = event.event_time.slot
 
+        # Determine if this event kind may open a new window.
+        # Legacy callers that pass event_kind=None retain the old open-always behaviour.
+        may_open_window = (event_kind is None) or (event_kind in WINDOW_OPENING_KINDS)
+
         if mint not in self._open:
+            if not may_open_window:
+                # Trade event (BUY/SELL/SWAP) with no prior CREATE/INIT window.
+                # Count as orphan; do NOT open a window; do NOT record.
+                self._orphan_events_total += 1
+                logger.debug(
+                    "shadow_recorder.orphan mint=%s kind=%s slot=%d — "
+                    "no open window; not recording as launch (T-LAUNCH-FILTER)",
+                    mint, event_kind, slot,
+                )
+                return
+
+            # Window-opening event (CREATE/WITHDRAW/INIT) or legacy None.
             if len(self._open) >= self._max_open_windows:
                 # Overflow: CENSOR and flush the oldest window
                 oldest_mint = next(iter(self._open))

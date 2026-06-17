@@ -387,19 +387,26 @@ async def _run(
         source, out_dir, max_events, first_k_slots,
     )
 
-    async for event, sig in pipeline.events(last_slot=0):
-        # 1. Write to point-in-time store (provenance honesty enforced here)
+    async for event, sig, event_kind in pipeline.events(last_slot=0):
+        # 1. Write to point-in-time store (provenance honesty enforced here).
+        #    ALL decoded events (including buys/sells) are written to the
+        #    point-in-time store for feature-quant (first-K microstructure).
         await store_writer.write_launch_event(event, sig)
 
-        # 2. Feed shadow recorder (K-slot window accumulator)
-        shadow_recorder.observe(event)
+        # 2. Feed shadow recorder (K-slot window accumulator).
+        #    The recorder gates window-opening on event_kind:
+        #      CREATE/WITHDRAW/INIT → opens a window on the first occurrence.
+        #      BUY/SELL/SWAP       → attributed to an existing window; orphan
+        #                            if no window exists (T-LAUNCH-FILTER).
+        shadow_recorder.observe(event, event_kind)
 
         events_decoded += 1
         logger.debug(
-            "event[%d] mint=%s source=%s slot=%d staleness=%dms",
+            "event[%d] mint=%s source=%s kind=%s slot=%d staleness=%dms",
             events_decoded,
             event.mint,
             event.source,
+            event_kind,
             event.event_time.slot,
             event.data_staleness_ms,
         )
@@ -440,6 +447,10 @@ async def _run(
         "events_skipped": pipeline.stats.events_skipped,
         "decode_errors": pipeline.stats.decode_errors,
         "snapshots_recorded": len(snapshots),
+        # orphan_events: buy/sell/swap received before any matching create/init.
+        # A rising orphan count means the ingest stream is seeing pre-existing
+        # tokens — expected in a live run but should be 0 in the replay demo.
+        "orphan_events": shadow_recorder.orphan_events_total,
         "corpus_path": str(corpus.path),
         "elapsed_ms": elapsed_ms,
         "data_staleness_ms": pipeline.stats.data_staleness_ms,

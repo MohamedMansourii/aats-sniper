@@ -507,8 +507,9 @@ class TestParseGeyserTxToPumpFunDecode:
             err=raw_tx.err,
         )
 
-        ev = decoder.decode(raw_tx_with_bt, DetectionTransport.GEYSER)
-        assert ev is not None, "After block_time is injected, pump.fun create MUST decode."
+        result = decoder.decode(raw_tx_with_bt, DetectionTransport.GEYSER)
+        assert result is not None, "After block_time is injected, pump.fun create MUST decode."
+        ev, _kind = result
         assert ev.source == LaunchSource.PUMPFUN
         assert ev.event_time.slot == 300_000_000
         assert ev.event_time.block_time_ms == 1_718_700_000_000

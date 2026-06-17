@@ -77,14 +77,14 @@ class TestResumeFromSlot:
             # Wave 1: process up to slot 300_000_000
             transport1 = ReplayTransport(txs_wave1)
             pipeline1 = TransportPipeline(transport1, router)
-            async for _ev, sig in pipeline1.events(last_slot=0):
+            async for _ev, sig, _kind in pipeline1.events(last_slot=0):
                 decoded_signatures.append(sig)
 
             # Simulate reconnect: wave 2 starts from last_slot+1
             last_slot = 300_000_001
             transport2 = ReplayTransport(txs_wave1 + txs_wave2)
             pipeline2 = TransportPipeline(transport2, router)
-            async for _ev, sig in pipeline2.events(last_slot=last_slot):
+            async for _ev, sig, _kind in pipeline2.events(last_slot=last_slot):
                 decoded_signatures.append(sig)
 
         asyncio.run(run())
@@ -108,7 +108,7 @@ class TestStalenessSignal:
         events = []
 
         async def run():
-            async for ev, _ in pipeline.events():
+            async for ev, _sig, _kind in pipeline.events():
                 events.append(ev)
 
         asyncio.run(run())
@@ -125,9 +125,10 @@ class TestStalenessSignal:
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_create_tx()  # block_time_unix_s = 1_718_700_000
         before_decode = int(time.time() * 1_000)
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        result = decoder.decode(tx, DetectionTransport.GEYSER)
         after_decode = int(time.time() * 1_000)
-        assert ev is not None
+        assert result is not None
+        ev, _kind = result
         expected_min = before_decode - 1_718_700_000_000
         expected_max = after_decode - 1_718_700_000_000 + 100
         assert expected_min <= ev.data_staleness_ms <= expected_max
@@ -157,7 +158,7 @@ class TestNoDuplicatePublishedEvents:
         events = []
 
         async def run():
-            async for ev, sig in pipeline.events():
+            async for ev, sig, _kind in pipeline.events():
                 events.append((ev, sig))
 
         asyncio.run(run())
@@ -197,7 +198,7 @@ class TestTransportPipelineStats:
         pipeline = TransportPipeline(transport, router)
 
         async def run():
-            async for _, _ in pipeline.events():
+            async for _, _, _ in pipeline.events():
                 pass
 
         asyncio.run(run())
@@ -212,7 +213,7 @@ class TestTransportPipelineStats:
         pipeline = TransportPipeline(transport, router)
 
         async def run():
-            async for _, _ in pipeline.events():
+            async for _, _, _ in pipeline.events():
                 pass
 
         asyncio.run(run())
@@ -260,7 +261,7 @@ class TestTransportPipelineStats:
         pipeline = TransportPipeline(transport, router)
 
         async def run():
-            async for _, _ in pipeline.events():
+            async for _, _, _ in pipeline.events():
                 pass
 
         asyncio.run(run())

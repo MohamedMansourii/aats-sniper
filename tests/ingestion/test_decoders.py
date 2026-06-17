@@ -9,8 +9,13 @@ typed event fields.  This satisfies the self-check requirement:
 No live network is required — fixtures use deterministic data derived from
 the production Anchor discriminator formula, matching exactly what the
 on-chain programs emit.
-"""
 
+T-LAUNCH-FILTER NOTE (2026-06-17):
+  decoder.decode() and router.route() now return (LaunchEvent, EventKind) | None.
+  The helper _ev() below extracts the LaunchEvent for assertions that only
+  care about event fields (not the kind).  Tests that verify EventKind use
+  _kind() or unpack directly.
+"""
 
 from aats.contracts.events import DetectionTransport, LaunchSource
 from aats.ingestion.decoders import (
@@ -33,6 +38,27 @@ from tests.ingestion.fixtures import (
     make_registry,
 )
 
+
+def _ev(result):
+    """Extract the LaunchEvent from a (LaunchEvent, EventKind) result.
+
+    Returns None if result is None.  Allows existing tests that test event
+    fields to work unchanged after the router/decoder return-type change.
+    """
+    if result is None:
+        return None
+    return result[0]
+
+
+def _kind(result):
+    """Extract the EventKind from a (LaunchEvent, EventKind) result.
+
+    Returns None if result is None.
+    """
+    if result is None:
+        return None
+    return result[1]
+
 # ---------------------------------------------------------------------------
 # pump.fun create
 # ---------------------------------------------------------------------------
@@ -42,7 +68,7 @@ class TestPumpFunCreate:
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_create_tx()
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev is not None, "Expected a LaunchEvent for pump.fun create"
         assert ev.source == LaunchSource.PUMPFUN
 
@@ -50,28 +76,28 @@ class TestPumpFunCreate:
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_create_tx()
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.mint == "MintPumpFun1111111111111111111111111111111111"
 
     def test_decoded_event_creator(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_create_tx()
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.creator_wallet == "CreatorWallet11111111111111111111111111111111"
 
     def test_decoded_event_slot(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_create_tx()
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.event_time.slot == 300_000_000
 
     def test_decoded_event_block_time(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_create_tx()
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.event_time.block_time_ms == 1_718_700_000_000
 
     def test_venue_program_id_from_registry(self):
@@ -79,14 +105,14 @@ class TestPumpFunCreate:
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_create_tx()
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.venue_program_id == PROGRAM_IDS[LaunchSource.PUMPFUN]
 
     def test_detection_transport_stamped(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_create_tx()
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.detection_transport == DetectionTransport.GEYSER
 
     def test_money_fields_are_integer(self):
@@ -94,7 +120,7 @@ class TestPumpFunCreate:
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_create_tx()
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert isinstance(ev.sol_reserve_lamports, int)
         assert isinstance(ev.token_reserve_base, int)
 
@@ -102,14 +128,14 @@ class TestPumpFunCreate:
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_create_tx()
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.data_staleness_ms >= 0
 
     def test_deploy_template_fingerprint_set(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_create_tx()
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.deploy_template_fingerprint is not None
         assert len(ev.deploy_template_fingerprint) == 16
 
@@ -117,7 +143,7 @@ class TestPumpFunCreate:
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_create_tx()
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.observation_slot <= ev.confirmation_slot
 
 
@@ -130,7 +156,7 @@ class TestPumpFunBuy:
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_buy_tx()
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev is not None
         assert ev.source == LaunchSource.PUMPFUN
 
@@ -138,7 +164,7 @@ class TestPumpFunBuy:
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_buy_tx()
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.mint == "MintPumpFun1111111111111111111111111111111111"
 
     def test_decoded_token_amount(self):
@@ -146,20 +172,20 @@ class TestPumpFunBuy:
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_buy_tx(token_amount=2_000_000_000, max_sol_cost_lamports=400_000_000)
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.token_reserve_base == 2_000_000_000
 
     def test_decoded_sol_cost(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_buy_tx(token_amount=1_000_000_000, max_sol_cost_lamports=250_000_000)
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.sol_reserve_lamports == 250_000_000
 
     def test_money_fields_integer(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
-        ev = decoder.decode(make_pumpfun_buy_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_pumpfun_buy_tx(), DetectionTransport.GEYSER))
         assert isinstance(ev.sol_reserve_lamports, int)
         assert isinstance(ev.token_reserve_base, int)
 
@@ -168,7 +194,7 @@ class TestPumpFunBuy:
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_buy_tx()
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.event_time.block_time_ms == tx.block_time_unix_s * 1_000
 
 
@@ -180,34 +206,34 @@ class TestPumpFunSell:
     def test_decoded_event_source(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
-        ev = decoder.decode(make_pumpfun_sell_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_pumpfun_sell_tx(), DetectionTransport.GEYSER))
         assert ev is not None
         assert ev.source == LaunchSource.PUMPFUN
 
     def test_decoded_mint(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
-        ev = decoder.decode(make_pumpfun_sell_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_pumpfun_sell_tx(), DetectionTransport.GEYSER))
         assert ev.mint == "MintPumpFun1111111111111111111111111111111111"
 
     def test_decoded_token_amount(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_sell_tx(token_amount=300_000_000, min_sol_output=50_000_000)
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.token_reserve_base == 300_000_000
 
     def test_decoded_min_sol_output(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
         tx = make_pumpfun_sell_tx(token_amount=300_000_000, min_sol_output=50_000_000)
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.sol_reserve_lamports == 50_000_000
 
     def test_money_fields_integer(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
-        ev = decoder.decode(make_pumpfun_sell_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_pumpfun_sell_tx(), DetectionTransport.GEYSER))
         assert isinstance(ev.sol_reserve_lamports, int)
         assert isinstance(ev.token_reserve_base, int)
 
@@ -221,33 +247,33 @@ class TestPumpFunMigrate:
         """Withdraw event must be decoded as MIGRATION (highest-value signal, EH-003)."""
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
-        ev = decoder.decode(make_pumpfun_withdraw_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_pumpfun_withdraw_tx(), DetectionTransport.GEYSER))
         assert ev is not None
         assert ev.source == LaunchSource.MIGRATION
 
     def test_decoded_mint(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
-        ev = decoder.decode(make_pumpfun_withdraw_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_pumpfun_withdraw_tx(), DetectionTransport.GEYSER))
         assert ev.mint == "MintPumpFun1111111111111111111111111111111111"
 
     def test_decoded_creator_wallet(self):
         """Creator = fee_payer (migration authority)."""
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
-        ev = decoder.decode(make_pumpfun_withdraw_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_pumpfun_withdraw_tx(), DetectionTransport.GEYSER))
         assert ev.creator_wallet == "MigrationAuthority1111111111111111111111111"
 
     def test_decoded_slot(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
-        ev = decoder.decode(make_pumpfun_withdraw_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_pumpfun_withdraw_tx(), DetectionTransport.GEYSER))
         assert ev.event_time.slot == 300_000_010
 
     def test_decoded_fingerprint_set(self):
         registry = make_registry()
         decoder = PumpFunDecoder(registry)
-        ev = decoder.decode(make_pumpfun_withdraw_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_pumpfun_withdraw_tx(), DetectionTransport.GEYSER))
         assert ev.deploy_template_fingerprint is not None
 
     def test_withdraw_has_priority_over_buy(self):
@@ -293,7 +319,7 @@ class TestPumpFunMigrate:
             inner_instructions=[],
             program_logs=[],
         )
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev is not None
         assert ev.source == LaunchSource.MIGRATION
 
@@ -306,41 +332,41 @@ class TestPumpSwapCreatePool:
     def test_decoded_event_source(self):
         registry = make_registry()
         decoder = PumpSwapDecoder(registry)
-        ev = decoder.decode(make_pumpswap_create_pool_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_pumpswap_create_pool_tx(), DetectionTransport.GEYSER))
         assert ev is not None
         assert ev.source == LaunchSource.PUMPSWAP
 
     def test_decoded_base_mint(self):
         registry = make_registry()
         decoder = PumpSwapDecoder(registry)
-        ev = decoder.decode(make_pumpswap_create_pool_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_pumpswap_create_pool_tx(), DetectionTransport.GEYSER))
         assert ev.mint == "BaseMintPumpSwap11111111111111111111111111111"
 
     def test_decoded_sol_reserve(self):
         registry = make_registry()
         decoder = PumpSwapDecoder(registry)
         tx = make_pumpswap_create_pool_tx(base_amount=800_000_000_000, quote_amount=30_000_000_000)
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.sol_reserve_lamports == 30_000_000_000
 
     def test_decoded_token_reserve(self):
         registry = make_registry()
         decoder = PumpSwapDecoder(registry)
         tx = make_pumpswap_create_pool_tx(base_amount=800_000_000_000, quote_amount=30_000_000_000)
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.token_reserve_base == 800_000_000_000
 
     def test_money_fields_integer(self):
         registry = make_registry()
         decoder = PumpSwapDecoder(registry)
-        ev = decoder.decode(make_pumpswap_create_pool_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_pumpswap_create_pool_tx(), DetectionTransport.GEYSER))
         assert isinstance(ev.sol_reserve_lamports, int)
         assert isinstance(ev.token_reserve_base, int)
 
     def test_block_time_ms(self):
         registry = make_registry()
         decoder = PumpSwapDecoder(registry)
-        ev = decoder.decode(make_pumpswap_create_pool_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_pumpswap_create_pool_tx(), DetectionTransport.GEYSER))
         assert ev.event_time.block_time_ms == 1_718_700_011 * 1_000
 
 
@@ -352,7 +378,7 @@ class TestRaydiumV4Init2:
     def test_decoded_event_source(self):
         registry = make_registry()
         decoder = RaydiumV4Decoder(registry)
-        ev = decoder.decode(make_raydium_v4_init2_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_raydium_v4_init2_tx(), DetectionTransport.GEYSER))
         assert ev is not None
         assert ev.source == LaunchSource.RAYDIUM_V4
 
@@ -361,7 +387,7 @@ class TestRaydiumV4Init2:
         registry = make_registry()
         decoder = RaydiumV4Decoder(registry)
         tx = make_raydium_v4_init2_tx(init_pc_amount=5_000_000_000, init_coin_amount=1_000_000_000_000)
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         # coin_mint = SOL_MINT → sol_lamports = init_coin_amount
         # For this fixture coin_mint IS the SOL mint, so sol side = init_coin_amount
         assert isinstance(ev.sol_reserve_lamports, int)
@@ -371,32 +397,32 @@ class TestRaydiumV4Init2:
         registry = make_registry()
         decoder = RaydiumV4Decoder(registry)
         tx = make_raydium_v4_init2_tx(init_pc_amount=5_000_000_000, init_coin_amount=1_000_000_000_000)
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert isinstance(ev.token_reserve_base, int)
         assert ev.token_reserve_base >= 0
 
     def test_venue_program_id(self):
         registry = make_registry()
         decoder = RaydiumV4Decoder(registry)
-        ev = decoder.decode(make_raydium_v4_init2_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_raydium_v4_init2_tx(), DetectionTransport.GEYSER))
         assert ev.venue_program_id == PROGRAM_IDS[LaunchSource.RAYDIUM_V4]
 
     def test_slot_stamped(self):
         registry = make_registry()
         decoder = RaydiumV4Decoder(registry)
-        ev = decoder.decode(make_raydium_v4_init2_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_raydium_v4_init2_tx(), DetectionTransport.GEYSER))
         assert ev.event_time.slot == 300_000_012
 
     def test_block_time_ms(self):
         registry = make_registry()
         decoder = RaydiumV4Decoder(registry)
-        ev = decoder.decode(make_raydium_v4_init2_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_raydium_v4_init2_tx(), DetectionTransport.GEYSER))
         assert ev.event_time.block_time_ms == 1_718_700_012 * 1_000
 
     def test_money_fields_integer(self):
         registry = make_registry()
         decoder = RaydiumV4Decoder(registry)
-        ev = decoder.decode(make_raydium_v4_init2_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_raydium_v4_init2_tx(), DetectionTransport.GEYSER))
         assert isinstance(ev.sol_reserve_lamports, int)
         assert isinstance(ev.token_reserve_base, int)
 
@@ -409,7 +435,7 @@ class TestRaydiumCpmmInit:
     def test_decoded_event_source(self):
         registry = make_registry()
         decoder = RaydiumCpmmDecoder(registry)
-        ev = decoder.decode(make_raydium_cpmm_init_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_raydium_cpmm_init_tx(), DetectionTransport.GEYSER))
         assert ev is not None
         assert ev.source == LaunchSource.RAYDIUM_CPMM
 
@@ -417,7 +443,7 @@ class TestRaydiumCpmmInit:
         """token0 = SOL → mint = token1."""
         registry = make_registry()
         decoder = RaydiumCpmmDecoder(registry)
-        ev = decoder.decode(make_raydium_cpmm_init_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_raydium_cpmm_init_tx(), DetectionTransport.GEYSER))
         assert ev.mint == "CpmmTokenMint11111111111111111111111111111111"
 
     def test_decoded_sol_reserve(self):
@@ -425,32 +451,32 @@ class TestRaydiumCpmmInit:
         registry = make_registry()
         decoder = RaydiumCpmmDecoder(registry)
         tx = make_raydium_cpmm_init_tx(amount_0=3_000_000_000, amount_1=500_000_000_000)
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.sol_reserve_lamports == 3_000_000_000
 
     def test_decoded_token_reserve(self):
         registry = make_registry()
         decoder = RaydiumCpmmDecoder(registry)
         tx = make_raydium_cpmm_init_tx(amount_0=3_000_000_000, amount_1=500_000_000_000)
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.token_reserve_base == 500_000_000_000
 
     def test_venue_program_id(self):
         registry = make_registry()
         decoder = RaydiumCpmmDecoder(registry)
-        ev = decoder.decode(make_raydium_cpmm_init_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_raydium_cpmm_init_tx(), DetectionTransport.GEYSER))
         assert ev.venue_program_id == PROGRAM_IDS[LaunchSource.RAYDIUM_CPMM]
 
     def test_block_time_ms(self):
         registry = make_registry()
         decoder = RaydiumCpmmDecoder(registry)
-        ev = decoder.decode(make_raydium_cpmm_init_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_raydium_cpmm_init_tx(), DetectionTransport.GEYSER))
         assert ev.event_time.block_time_ms == 1_718_700_013 * 1_000
 
     def test_money_fields_integer(self):
         registry = make_registry()
         decoder = RaydiumCpmmDecoder(registry)
-        ev = decoder.decode(make_raydium_cpmm_init_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_raydium_cpmm_init_tx(), DetectionTransport.GEYSER))
         assert isinstance(ev.sol_reserve_lamports, int)
         assert isinstance(ev.token_reserve_base, int)
 
@@ -459,7 +485,7 @@ class TestRaydiumCpmmSwap:
     def test_decoded_event_source(self):
         registry = make_registry()
         decoder = RaydiumCpmmDecoder(registry)
-        ev = decoder.decode(make_raydium_cpmm_swap_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_raydium_cpmm_swap_tx(), DetectionTransport.GEYSER))
         assert ev is not None
         assert ev.source == LaunchSource.RAYDIUM_CPMM
 
@@ -467,20 +493,20 @@ class TestRaydiumCpmmSwap:
         """Input = SOL → output mint = the token."""
         registry = make_registry()
         decoder = RaydiumCpmmDecoder(registry)
-        ev = decoder.decode(make_raydium_cpmm_swap_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_raydium_cpmm_swap_tx(), DetectionTransport.GEYSER))
         assert ev.mint == "CpmmTokenMint11111111111111111111111111111111"
 
     def test_decoded_amount_in(self):
         registry = make_registry()
         decoder = RaydiumCpmmDecoder(registry)
         tx = make_raydium_cpmm_swap_tx(amount_in=150_000_000, min_out=1_200_000_000)
-        ev = decoder.decode(tx, DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(tx, DetectionTransport.GEYSER))
         assert ev.sol_reserve_lamports == 150_000_000
 
     def test_money_fields_integer(self):
         registry = make_registry()
         decoder = RaydiumCpmmDecoder(registry)
-        ev = decoder.decode(make_raydium_cpmm_swap_tx(), DetectionTransport.GEYSER)
+        ev = _ev(decoder.decode(make_raydium_cpmm_swap_tx(), DetectionTransport.GEYSER))
         assert isinstance(ev.sol_reserve_lamports, int)
         assert isinstance(ev.token_reserve_base, int)
 
@@ -493,42 +519,42 @@ class TestInstructionRouter:
     def test_routes_pumpfun_create(self):
         registry = make_registry()
         router = InstructionRouter(registry)
-        ev = router.route(make_pumpfun_create_tx(), DetectionTransport.GEYSER)
+        ev = _ev(router.route(make_pumpfun_create_tx(), DetectionTransport.GEYSER))
         assert ev is not None
         assert ev.source == LaunchSource.PUMPFUN
 
     def test_routes_pumpfun_migrate(self):
         registry = make_registry()
         router = InstructionRouter(registry)
-        ev = router.route(make_pumpfun_withdraw_tx(), DetectionTransport.GEYSER)
+        ev = _ev(router.route(make_pumpfun_withdraw_tx(), DetectionTransport.GEYSER))
         assert ev is not None
         assert ev.source == LaunchSource.MIGRATION
 
     def test_routes_pumpswap_create_pool(self):
         registry = make_registry()
         router = InstructionRouter(registry)
-        ev = router.route(make_pumpswap_create_pool_tx(), DetectionTransport.GEYSER)
+        ev = _ev(router.route(make_pumpswap_create_pool_tx(), DetectionTransport.GEYSER))
         assert ev is not None
         assert ev.source == LaunchSource.PUMPSWAP
 
     def test_routes_raydium_v4_init2(self):
         registry = make_registry()
         router = InstructionRouter(registry)
-        ev = router.route(make_raydium_v4_init2_tx(), DetectionTransport.GEYSER)
+        ev = _ev(router.route(make_raydium_v4_init2_tx(), DetectionTransport.GEYSER))
         assert ev is not None
         assert ev.source == LaunchSource.RAYDIUM_V4
 
     def test_routes_raydium_cpmm_init(self):
         registry = make_registry()
         router = InstructionRouter(registry)
-        ev = router.route(make_raydium_cpmm_init_tx(), DetectionTransport.GEYSER)
+        ev = _ev(router.route(make_raydium_cpmm_init_tx(), DetectionTransport.GEYSER))
         assert ev is not None
         assert ev.source == LaunchSource.RAYDIUM_CPMM
 
     def test_routes_raydium_cpmm_swap(self):
         registry = make_registry()
         router = InstructionRouter(registry)
-        ev = router.route(make_raydium_cpmm_swap_tx(), DetectionTransport.GEYSER)
+        ev = _ev(router.route(make_raydium_cpmm_swap_tx(), DetectionTransport.GEYSER))
         assert ev is not None
         assert ev.source == LaunchSource.RAYDIUM_CPMM
 
@@ -603,7 +629,7 @@ class TestInstructionRouter:
             make_raydium_cpmm_swap_tx(),
         ]
         for tx in txs:
-            ev = router.route(tx, DetectionTransport.GEYSER)
+            ev = _ev(router.route(tx, DetectionTransport.GEYSER))
             if ev is not None:
                 assert isinstance(ev.sol_reserve_lamports, int), f"Float money in {tx.signature}"
                 assert isinstance(ev.token_reserve_base, int), f"Float money in {tx.signature}"

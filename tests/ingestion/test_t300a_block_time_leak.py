@@ -316,7 +316,8 @@ class TestConfirmedBlockTimeDecodesNormally:
         tx = make_pumpfun_create_tx()  # has block_time_unix_s=1_718_700_000
         result = decoder.decode(tx, DetectionTransport.GEYSER)
         assert result is not None
-        assert result.event_time.block_time_ms == 1_718_700_000 * 1_000
+        ev, _kind = result
+        assert ev.event_time.block_time_ms == 1_718_700_000 * 1_000
 
     def test_pumpfun_buy_block_time_ms_equals_on_chain(self):
         """event_time.block_time_ms must equal block_time_unix_s * 1000 (C-5)."""
@@ -325,7 +326,8 @@ class TestConfirmedBlockTimeDecodesNormally:
         tx = make_pumpfun_buy_tx()  # block_time_unix_s=1_718_700_001
         result = decoder.decode(tx, DetectionTransport.GEYSER)
         assert result is not None
-        assert result.event_time.block_time_ms == tx.block_time_unix_s * 1_000
+        ev, _kind = result
+        assert ev.event_time.block_time_ms == tx.block_time_unix_s * 1_000
 
     def test_staleness_is_positive_for_old_event(self):
         """data_staleness_ms must be > 0 for an on-chain event from 2024."""
@@ -334,10 +336,11 @@ class TestConfirmedBlockTimeDecodesNormally:
         tx = make_pumpfun_create_tx()
         result = decoder.decode(tx, DetectionTransport.GEYSER)
         assert result is not None
+        ev, _kind = result
         # In 2026, a 2024 event has high staleness
-        assert result.data_staleness_ms > 0
+        assert ev.data_staleness_ms > 0
         # And it must NOT be STALENESS_UNKNOWN
-        assert result.data_staleness_ms != STALENESS_UNKNOWN
+        assert ev.data_staleness_ms != STALENESS_UNKNOWN
 
     def test_all_decoders_decode_confirmed_events(self):
         """Regression: confirm the happy path still works for all decoders."""
@@ -356,11 +359,12 @@ class TestConfirmedBlockTimeDecodesNormally:
         for tx, expected_source in txs:
             result = router.route(tx, DetectionTransport.GEYSER)
             assert result is not None, f"Confirmed-block_time tx {tx.signature} returned None"
-            assert result.source == expected_source
-            assert result.event_time.block_time_ms > 0
+            ev, _kind = result
+            assert ev.source == expected_source
+            assert ev.event_time.block_time_ms > 0
             assert (
-                result.event_time.block_time_ms != result.event_time.wall_clock_ms
-                or result.event_time.block_time_ms < result.event_time.wall_clock_ms
+                ev.event_time.block_time_ms != ev.event_time.wall_clock_ms
+                or ev.event_time.block_time_ms < ev.event_time.wall_clock_ms
             ), "block_time_ms must be the on-chain value, not wall_clock_ms"
 
 

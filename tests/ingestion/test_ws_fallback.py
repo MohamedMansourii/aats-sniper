@@ -812,7 +812,7 @@ class TestEndToEndWsDecoder:
                 pipeline = TransportPipeline(transport=fallback, router=router)
                 ev_gen = pipeline.events()
                 try:
-                    async for ev, sig in ev_gen:
+                    async for ev, sig, _kind in ev_gen:
                         events.append((ev, sig))
                         break
                 finally:
