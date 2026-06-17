@@ -7,14 +7,14 @@
 #
 # No secrets in this file. Bot token is a Vault reference; see .env.example.
 
-FROM python:3.11.9-slim@sha256:7b09a3b7ccb95df60a78c4d2b0e52fc78d4e64fe9a9fddb0f9a0ea50d7cd8d9a AS builder
+FROM python:3.11.9-slim AS builder
 WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements/requirements.txt /build/requirements.txt
 RUN pip install --no-cache-dir --prefix=/install -r /build/requirements.txt
 
-FROM python:3.11.9-slim@sha256:7b09a3b7ccb95df60a78c4d2b0e52fc78d4e64fe9a9fddb0f9a0ea50d7cd8d9a AS runtime
+FROM python:3.11.9-slim AS runtime
 
 LABEL org.opencontainers.image.title="aats-telegram"
 LABEL org.opencontainers.image.description="AATS Telegram alert + de-risk commands (Lane F)"

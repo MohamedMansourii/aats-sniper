@@ -7,7 +7,7 @@
 # NFR-011 / AC-049: dashboard MUST build green on mock. This image enforces it.
 
 # ── Stage 1: Node build ────────────────────────────────────────────────────
-FROM node:20.14.0-slim@sha256:placeholder AS node-builder
+FROM node:20.14.0-slim AS node-builder
 
 WORKDIR /app
 
@@ -28,7 +28,7 @@ ENV VITE_CONTROL_PLANE_URL=${VITE_CONTROL_PLANE_URL}
 RUN npm run build
 
 # ── Stage 2: nginx static serve ───────────────────────────────────────────
-FROM nginx:1.27.0-alpine@sha256:placeholder AS runtime
+FROM nginx:1.27.0-alpine AS runtime
 
 LABEL org.opencontainers.image.title="aats-dashboard"
 LABEL org.opencontainers.image.description="AATS operator dashboard (Vite static, served via nginx)"

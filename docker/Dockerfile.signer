@@ -11,7 +11,7 @@
 # Audited by crypto-security-engineer at G4 (T-403).
 
 # ── Stage 1: Rust build ────────────────────────────────────────────────────
-FROM rust:1.79.0-slim@sha256:placeholder AS rust-builder
+FROM rust:1.79.0-slim AS rust-builder
 
 WORKDIR /build
 
@@ -27,7 +27,7 @@ RUN cargo build --release --bin aats-signer
 # ── Stage 2: distroless runtime (minimal attack surface) ───────────────────
 # Note: crypto-security-engineer (T-251 / T-352a) may replace this with a
 # custom static musl binary. Distroless is the hardened default.
-FROM gcr.io/distroless/cc-debian12:latest@sha256:placeholder AS runtime
+FROM gcr.io/distroless/cc-debian12:latest AS runtime
 
 LABEL org.opencontainers.image.title="aats-signer"
 LABEL org.opencontainers.image.description="AATS minimal-surface signer (ADR-0009)"
