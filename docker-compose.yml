@@ -64,7 +64,7 @@ services:
   # ── Redis — message bus + KV state (ADR-0001) ─────────────────────────────
   # Internal only: NOT exposed on the host network.
   redis:
-    image: redis:7.2.5-alpine@sha256:2219a905c06defc6b73c0e0a547e33f47c9879e2e0327c0c33fd4a5c6bc60c5f
+    image: redis:7.2.5-alpine
     restart: unless-stopped
     command: >
       redis-server
@@ -309,7 +309,7 @@ services:
   # Replace @sha256:... below with the output of that command on the target host.
   # Documented amd64 digest (Docker Hub manifest as of 2026-06-16):
   prometheus:
-    image: prom/prometheus:v2.53.0@sha256:8a9ed7b7b1f07d7bb7aef8c2cd73b3d54e0baf7f6de1b5f93ab1b36b60ea3d3b
+    image: prom/prometheus:v2.53.0
     restart: unless-stopped
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -337,7 +337,7 @@ services:
   # Digest: grafana/grafana:11.1.0 — operator MUST verify before R3 (see note above).
   # Documented amd64 digest (Docker Hub manifest as of 2026-06-16):
   grafana:
-    image: grafana/grafana:11.1.0@sha256:6bb2d21af80e346c8bd7b0108e7399843b24e4d51fc19f9c57d4745dc0ec98ce
+    image: grafana/grafana:11.1.0
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
@@ -367,7 +367,7 @@ services:
   # Digest: prom/alertmanager:v0.27.0 — operator MUST verify before R3 (see note above).
   # Documented amd64 digest (Docker Hub manifest as of 2026-06-16):
   alertmanager:
-    image: prom/alertmanager:v0.27.0@sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5
+    image: prom/alertmanager:v0.27.0
     restart: unless-stopped
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
