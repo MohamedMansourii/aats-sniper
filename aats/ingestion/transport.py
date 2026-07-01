@@ -1480,6 +1480,28 @@ PUMPPORTAL_DEFAULT_WS_URL = "wss://pumpportal.fun/api/data"
 _PUMP_TOKEN_DECIMALS = 6
 
 
+# ---------------------------------------------------------------------------
+# QUOTE_MINTS — known settlement / quote-currency mints (T-QUOTE-GUARD)
+# ---------------------------------------------------------------------------
+#
+# These are never new tokens: they are the SETTLEMENT side of every AMM pair.
+# A LaunchEvent keyed on any of these mints is a mapping bug — either the
+# PumpPortal feed placed the quote mint in the "mint" field of a migration
+# message, or a decoder selected the wrong side of a pool pair.
+#
+# Guard placement:
+#   PRIMARY  — _map_new_token / _map_migration in PumpPortalTransport
+#              (drop before LaunchEvent construction; increment events_skipped)
+#   SECONDARY — ShadowRecorder.observe() in store.py
+#              (defense-in-depth; increment orphan_events_total)
+#
+QUOTE_MINTS: frozenset[str] = frozenset({
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",   # USDT
+    "So11111111111111111111111111111111111111112",       # WSOL / native SOL wrapper
+})
+
+
 def _pp_now_ms() -> int:
     """Current wall-clock in milliseconds (monitoring/staleness use ONLY).
 
@@ -1792,7 +1814,25 @@ class PumpPortalTransport:
         POINT-IN-TIME HONESTY (T-300a):
         Returns None if on-chain block_time is unavailable.  Wall-clock is
         NEVER substituted into event_time.
+
+        QUOTE-MINT GUARD (T-QUOTE-GUARD):
+        A create event keyed on USDC / USDT / WSOL is a PumpPortal mapping
+        bug — the feed placed the settlement/quote mint in the 'mint' field
+        instead of the new bonding-curve token.  Drop and count; never record
+        as a launch.
         """
+        # T-QUOTE-GUARD: settlement mints are never new tokens.
+        if mint in QUOTE_MINTS:
+            logger.warning(
+                "PumpPortalTransport._map_new_token: quote mint in create "
+                "(mapping bug) — mint=%s sig=%.16s… "
+                "(dropped; not recorded as launch)",
+                mint,
+                signature,
+            )
+            self.stats.events_skipped += 1
+            return None
+
         slot, block_time_ms = await self._get_slot_time(signature)
         if block_time_ms is None:
             logger.debug(
@@ -1869,7 +1909,26 @@ class PumpPortalTransport:
         POINT-IN-TIME HONESTY (T-300a):
         Returns None if on-chain block_time is unavailable.  Wall-clock is
         NEVER substituted into event_time.
+
+        QUOTE-MINT GUARD (T-QUOTE-GUARD):
+        A migration event keyed on USDC / USDT / WSOL is a PumpPortal mapping
+        bug — the feed placed the Raydium pool's quote/settlement mint in the
+        'mint' field instead of the graduated pump.fun base token.  This is the
+        confirmed live-run failure mode (1/40 launches keyed on USDC).  Drop
+        and count; never record as a launch.
         """
+        # T-QUOTE-GUARD: settlement mints are never graduated tokens.
+        if mint in QUOTE_MINTS:
+            logger.warning(
+                "PumpPortalTransport._map_migration: quote mint in migration "
+                "(mapping bug — likely PumpPortal sent quote side of Raydium pair) "
+                "— mint=%s sig=%.16s… (dropped; not recorded as launch)",
+                mint,
+                signature,
+            )
+            self.stats.events_skipped += 1
+            return None
+
         slot, block_time_ms = await self._get_slot_time(signature)
         if block_time_ms is None:
             logger.debug(

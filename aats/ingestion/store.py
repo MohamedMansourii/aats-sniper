@@ -587,9 +587,29 @@ class ShadowRecorder:
         """
         # Import here to avoid circular imports at module load time.
         from aats.ingestion.decoders import WINDOW_OPENING_KINDS
+        from aats.ingestion.transport import QUOTE_MINTS
 
         mint = event.mint
         slot = event.event_time.slot
+
+        # QUOTE-MINT GUARD (T-QUOTE-GUARD, defense-in-depth).
+        # A window keyed on a known settlement/quote mint (USDC, USDT, WSOL) is
+        # always a mapping bug — the upstream decoder or PumpPortal feed selected
+        # the wrong side of an AMM pair.  Drop it here as the last line of defense
+        # so even an upstream caller that bypasses the transport-layer guard can
+        # never record a launch for a quote token.
+        # Count via the orphan counter so the anomaly is visible in monitoring.
+        if mint in QUOTE_MINTS:
+            self._orphan_events_total += 1
+            logger.warning(
+                "shadow_recorder.quote_mint_guard mint=%s kind=%s slot=%d — "
+                "quote/settlement mint cannot be a launch token; dropped "
+                "(T-QUOTE-GUARD defense-in-depth)",
+                mint,
+                event_kind,
+                slot,
+            )
+            return
 
         # Determine if this event kind may open a new window.
         # Legacy callers that pass event_kind=None retain the old open-always behaviour.
