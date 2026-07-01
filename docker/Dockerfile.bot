@@ -39,6 +39,9 @@ COPY --from=builder /install /usr/local
 COPY aats/ /app/aats/
 COPY sol-sniper/ /app/sol-sniper/
 COPY pyproject.toml /app/pyproject.toml
+# Runtime config (program allowlist, tip-account pin) — needed by the controller
+# (pumpportal feed) and the signer allowlist. Public addresses only, no secrets.
+COPY config/ /app/config/
 
 # Non-root user
 RUN adduser --disabled-password --gecos "" --uid 1000 aats
