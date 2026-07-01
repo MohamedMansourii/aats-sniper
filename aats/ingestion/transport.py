@@ -79,8 +79,8 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any
 
-from aats.contracts.events import DetectionTransport
-from aats.ingestion.decoders import RawInstruction, RawTransaction
+from aats.contracts.events import DetectionTransport, EventTime, LaunchEvent, LaunchSource
+from aats.ingestion.decoders import EventKind, RawInstruction, RawTransaction
 
 logger = logging.getLogger(__name__)
 
@@ -960,8 +960,14 @@ class EnhancedWsFallback(TransportInterface):
         try:
             async with _ws.connect(  # type: ignore[attr-defined]
                 self._ws_url,
-                ping_interval=20,
-                ping_timeout=10,
+                # ping_interval=None: disable client-side keepalive pings.
+                # Helius free-tier does NOT answer pings; the default 20s
+                # ping_interval causes a 1011 "keepalive ping timeout" close
+                # after the first unanswered ping.  The server may still send
+                # pings and the websockets library will respond with pong
+                # automatically — that path is unaffected by this setting.
+                ping_interval=None,
+                ping_timeout=None,  # irrelevant when ping_interval=None
                 close_timeout=5,
             ) as ws:
                 self._connected = True
@@ -994,6 +1000,11 @@ class EnhancedWsFallback(TransportInterface):
                 # poll_idle_timeout_s, exit _stream_ws and let the caller
                 # fall through to polling.
                 last_event_wall_s = _time_now_s()
+                # Staleness watchdog: track whether we have ever received a real
+                # logsNotification (as opposed to just subscription confirmations).
+                # A silent subscription (confirmations but no notifications) is
+                # indistinguishable from a healthy one unless we track this flag.
+                _first_notification_logged = False
 
                 async for raw_msg in ws:
                     try:
@@ -1021,8 +1032,9 @@ class EnhancedWsFallback(TransportInterface):
                         elapsed = _time_now_s() - last_event_wall_s
                         if elapsed > self._poll_idle_timeout_s:
                             logger.warning(
-                                "EnhancedWsFallback: WS idle for %.1fs — "
-                                "exiting WS stream to try polling.",
+                                "EnhancedWsFallback: WS idle for %.1fs with no "
+                                "logsNotification — subscription appears silent.  "
+                                "Exiting WS stream to try polling fallback.",
                                 elapsed,
                             )
                             return
@@ -1039,6 +1051,18 @@ class EnhancedWsFallback(TransportInterface):
                     signature = value.get("signature")
                     if not signature:
                         continue
+
+                    # Staleness watchdog: log the first notification so operators
+                    # can confirm the subscription is actually pushing data (vs
+                    # silently receiving only confirmations and then timing out).
+                    if not _first_notification_logged:
+                        elapsed_since_connect = _time_now_s() - last_event_wall_s
+                        logger.info(
+                            "EnhancedWsFallback: first logsNotification received "
+                            "(%.1fs after subscribe) — feed is live.",
+                            elapsed_since_connect,
+                        )
+                        _first_notification_logged = True
 
                     # Dedup
                     if self._is_seen(signature):
@@ -1443,6 +1467,541 @@ class TransportStats:
         if self.last_event_time_ms == 0:
             return 0
         return max(0, int(time.time() * 1_000) - self.last_event_time_ms)
+
+
+# ---------------------------------------------------------------------------
+# PumpPortalTransport — purpose-built pre-decoded pump.fun live feed
+# ---------------------------------------------------------------------------
+
+# Default public PumpPortal endpoint (no API key required).
+PUMPPORTAL_DEFAULT_WS_URL = "wss://pumpportal.fun/api/data"
+
+# pump.fun tokens always use 6 decimal places.
+_PUMP_TOKEN_DECIMALS = 6
+
+
+def _pp_now_ms() -> int:
+    """Current wall-clock in milliseconds (monitoring/staleness use ONLY).
+
+    Kept as a named function so tests can patch it without affecting
+    the main `_time_now_s` used by EnhancedWsFallback.
+    """
+    return int(time.time() * 1_000)
+
+
+class PumpPortalTransport:
+    """PumpPortal WebSocket transport — purpose-built pre-decoded pump.fun feed.
+
+    Connects to wss://pumpportal.fun/api/data and sends subscribe frames:
+      {"method": "subscribeNewToken"}   — new bonding-curve token creations
+      {"method": "subscribeMigration"}  — pump.fun → PumpSwap graduations
+
+    Yields (LaunchEvent, signature, EventKind) tuples directly, bypassing the
+    RawTransaction → InstructionRouter decode path because PumpPortal messages
+    are already decoded JSON.
+
+    POINT-IN-TIME HONESTY (T-300a)
+    --------------------------------
+    PumpPortal message timestamps are SERVER/RECEIVE times, NOT on-chain
+    block_time.  We OPTIONALLY enrich via RPC getTransaction (RPC_PRIMARY) to
+    obtain the real slot + blockTime, and use THAT as event_time.
+
+    If no on-chain time is available (enrichment disabled, RPC unavailable,
+    or blockTime absent from the response), the event is NOT yielded.
+    Wall-clock is NEVER substituted into event_time.  The pending count is
+    tracked in `stats.events_skipped` so monitoring surfaces the gap.
+
+    CONTRACT DISCIPLINE
+    -------------------
+    LaunchEvent fields are the FROZEN contract (data-models.md §2).  No
+    new fields are added here.  PumpPortal-specific fields not present in
+    the contract (e.g. token name/symbol/URI, marketCapSol) are dropped.
+    source is LaunchSource.PUMPFUN for new tokens, LaunchSource.MIGRATION
+    for graduations.  detection_transport is DetectionTransport.GEYSER
+    (same tag as the WS fallback — redundancy path convention).
+
+    CREDENTIALS — from environment ONLY, never hardcoded or logged:
+      PUMPPORTAL_WS_URL — WebSocket URL (default: wss://pumpportal.fun/api/data)
+                          Overridable so operators can route through a proxy.
+      RPC_PRIMARY       — HTTP RPC URL for optional getTransaction enrichment.
+                          If blank, enrichment is skipped and no events are
+                          yielded (T-300a: no wall-clock substitution).
+
+    SECURITY
+      PUMPPORTAL_WS_URL and RPC_PRIMARY may contain API keys as query params.
+      They are NEVER logged (same discipline as GeyserTransport x-token and
+      EnhancedWsFallback WS_ENDPOINT).
+
+    READ-ONLY — no signing, no keypair, no OMS touch, no capital.
+
+    BACKPRESSURE
+      events() decodes and yields, then returns.  No price math, no model
+      call, no synchronous enrichment blocks the producer beyond a short
+      async getTransaction call.  If enrichment is too slow, set
+      enrich_via_rpc=False and accept no block_time (all events dropped,
+      T-300a).  A future block_time enricher can back-fill pending events.
+    """
+
+    _PP_RETRY_MIN_WAIT_S: float = 1.0
+    _PP_RETRY_MAX_WAIT_S: float = 30.0
+    _PP_RETRY_MULTIPLIER: float = 2.0
+
+    # Subscribe frames sent on connect (in order).
+    _SUBSCRIBE_FRAMES: list[dict] = [
+        {"method": "subscribeNewToken"},
+        {"method": "subscribeMigration"},
+    ]
+
+    def __init__(
+        self,
+        ws_url: str,           # env: PUMPPORTAL_WS_URL — NEVER logged
+        rpc_url: str,          # env: RPC_PRIMARY — for optional enrichment; NEVER logged
+        pump_program_id: str,  # from ProgramRegistry.program_id(LaunchSource.PUMPFUN)
+        enrich_via_rpc: bool = True,
+        max_reconnect_attempts: int = 0,  # 0 = infinite
+    ) -> None:
+        self._ws_url = ws_url       # NOT logged (may contain API key)
+        self._rpc_url = rpc_url     # NOT logged (may contain API key)
+        self._pump_program_id = pump_program_id
+        self._enrich_via_rpc = enrich_via_rpc
+        self._max_reconnect_attempts = max_reconnect_attempts
+        self._connected = False
+        # events dropped due to absent block_time (T-300a honesty counter)
+        self._pending_no_block_time: int = 0
+        import random
+        self._rng = random.Random()
+        # Shared stats object — same shape as TransportPipeline.stats so
+        # shadow_record._run() can treat both pipelines identically.
+        self.stats = TransportStats()
+
+    @property
+    def is_connected(self) -> bool:
+        """Whether the WS connection is currently active."""
+        return self._connected
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    async def events(
+        self,
+        last_slot: int = 0,
+    ) -> AsyncGenerator[tuple, None]:
+        """Yield (LaunchEvent, signature, EventKind) from the PumpPortal feed.
+
+        last_slot is accepted for API compatibility with TransportPipeline.events()
+        but PumpPortal is a live-tip stream — it does not support from_slot resume.
+
+        Reconnects with exponential backoff + jitter on WS drop.
+        Yields nothing and logs a clear error if ws_url is empty.
+        """
+        if not self._ws_url:
+            logger.error(
+                "PumpPortalTransport.events(): PUMPPORTAL_WS_URL is not set.  "
+                "Set PUMPPORTAL_WS_URL in the environment (default: %s).  "
+                "See .env.example.  Yielding nothing.",
+                PUMPPORTAL_DEFAULT_WS_URL,
+            )
+            return
+
+        attempt = 0
+        while True:
+            attempt += 1
+            if self._max_reconnect_attempts > 0 and attempt > self._max_reconnect_attempts:
+                logger.error(
+                    "PumpPortalTransport: max reconnect attempts (%d) reached — giving up.",
+                    self._max_reconnect_attempts,
+                )
+                break
+
+            try:
+                async for item in self._stream_ws():
+                    yield item
+                logger.info(
+                    "PumpPortalTransport: stream ended cleanly — reconnecting (attempt %d).",
+                    attempt,
+                )
+            except _WsConnectError as exc:
+                self._connected = False
+                logger.warning(
+                    "PumpPortalTransport: WS connect failed (attempt %d): %s — reconnecting.",
+                    attempt,
+                    exc,
+                )
+            except asyncio.CancelledError:
+                self._connected = False
+                logger.info("PumpPortalTransport: cancelled — shutting down.")
+                raise
+            except Exception as exc:  # noqa: BLE001
+                self._connected = False
+                logger.warning(
+                    "PumpPortalTransport: error (attempt %d): %s — reconnecting.",
+                    attempt,
+                    exc,
+                    exc_info=True,
+                )
+
+            # Exponential backoff with jitter before reconnect
+            wait_s = min(
+                self._PP_RETRY_MIN_WAIT_S * (self._PP_RETRY_MULTIPLIER ** (attempt - 1)),
+                self._PP_RETRY_MAX_WAIT_S,
+            )
+            jitter = self._rng.uniform(0, wait_s * 0.25)
+            sleep_s = wait_s + jitter
+            logger.info(
+                "PumpPortalTransport: backing off %.2fs before reconnect.", sleep_s
+            )
+            await asyncio.sleep(sleep_s)
+
+    # ------------------------------------------------------------------
+    # WS stream
+    # ------------------------------------------------------------------
+
+    async def _stream_ws(self) -> AsyncGenerator[tuple, None]:
+        """Open one WS connection, subscribe, yield events until stream closes."""
+        _ws = _ws_import()
+        import json as _json
+
+        # URL may contain an API key — never log the full URL.
+        logger.info(
+            "PumpPortalTransport: opening WS connection "
+            "(URL contains credentials if present — not logged)"
+        )
+
+        try:
+            async with _ws.connect(  # type: ignore[attr-defined]
+                self._ws_url,
+                # No client-side pings — PumpPortal acts as the server and
+                # will close the connection if we send unanswered pings.
+                ping_interval=None,
+                ping_timeout=None,
+                close_timeout=5,
+            ) as ws:
+                self._connected = True
+
+                # Send subscribe handshake frames (required before any data arrives)
+                for frame in self._SUBSCRIBE_FRAMES:
+                    await ws.send(_json.dumps(frame))
+                logger.info(
+                    "PumpPortalTransport: connected — sent %d subscribe frames: %s",
+                    len(self._SUBSCRIBE_FRAMES),
+                    [f["method"] for f in self._SUBSCRIBE_FRAMES],
+                )
+
+                async for raw_msg in ws:
+                    try:
+                        msg = _json.loads(raw_msg)
+                    except (_json.JSONDecodeError, TypeError) as exc:
+                        logger.debug(
+                            "PumpPortalTransport: malformed JSON (skipped): %s", exc
+                        )
+                        self.stats.events_skipped += 1
+                        continue
+
+                    if not isinstance(msg, dict):
+                        logger.debug(
+                            "PumpPortalTransport: non-dict message type %s (skipped)",
+                            type(msg).__name__,
+                        )
+                        self.stats.events_skipped += 1
+                        continue
+
+                    result = await self._process_message(msg)
+                    if result is not None:
+                        ev, sig, kind = result
+                        self.stats.events_decoded += 1
+                        self.stats.last_event_time_ms = ev.event_time.block_time_ms
+                        self.stats.last_slot = ev.event_time.slot
+                        yield result
+
+        except OSError as exc:
+            raise _WsConnectError(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            ws_exc_names = {
+                "ConnectionClosedError", "InvalidURI", "WebSocketException",
+                "InvalidHandshake", "ConnectionRefusedError",
+            }
+            if type(exc).__name__ in ws_exc_names:
+                raise _WsConnectError(str(exc)) from exc
+            raise
+        finally:
+            self._connected = False
+
+    # ------------------------------------------------------------------
+    # Message dispatch
+    # ------------------------------------------------------------------
+
+    async def _process_message(self, msg: dict) -> tuple | None:
+        """Route a PumpPortal message to (LaunchEvent, signature, EventKind) or None.
+
+        Handles:
+          txType "create"    → new bonding-curve token → EventKind.CREATE
+          txType "migrate"   → pump.fun graduation     → EventKind.WITHDRAW
+          txType "buy"/"sell" → trade (not subscribed) → skip
+          unknown / missing  → skip with debug log
+
+        Returns None when:
+          - txType is unrecognised (skip, no crash)
+          - mint is absent (malformed message)
+          - on-chain block_time unavailable (T-300a: not yielded)
+        """
+        tx_type = msg.get("txType", "")
+        mint = msg.get("mint", "")
+        signature = msg.get("signature", "")
+
+        if not mint:
+            logger.debug(
+                "PumpPortalTransport: message missing 'mint' field (skipped): %r",
+                msg,
+            )
+            self.stats.events_skipped += 1
+            return None
+
+        if tx_type == "create":
+            return await self._map_new_token(msg, signature, mint)
+        elif tx_type in ("migrate", "migration", "grad", "graduation"):
+            return await self._map_migration(msg, signature, mint)
+        elif tx_type in ("buy", "sell", "swap"):
+            # Trade events — subscribeTokenTrade/subscribeAccountTrade are off
+            # by default.  If they arrive (e.g. operator re-subscribed), skip.
+            self.stats.events_skipped += 1
+            return None
+        else:
+            # Unknown / system messages (e.g. error frames, heartbeats).
+            # Log at debug level so the operator can see them, but do not crash.
+            logger.debug(
+                "PumpPortalTransport: unrecognised txType=%r for mint=%s (skipped)",
+                tx_type,
+                mint,
+            )
+            self.stats.events_skipped += 1
+            return None
+
+    # ------------------------------------------------------------------
+    # Event builders
+    # ------------------------------------------------------------------
+
+    async def _map_new_token(
+        self,
+        msg: dict,
+        signature: str,
+        mint: str,
+    ) -> tuple | None:
+        """Map a subscribeNewToken message to (LaunchEvent, sig, EventKind.CREATE).
+
+        POINT-IN-TIME HONESTY (T-300a):
+        Returns None if on-chain block_time is unavailable.  Wall-clock is
+        NEVER substituted into event_time.
+        """
+        slot, block_time_ms = await self._get_slot_time(signature)
+        if block_time_ms is None:
+            logger.debug(
+                "PumpPortalTransport: no on-chain block_time for new-token "
+                "mint=%s sig=%.16s… (T-300a: holding pending, not yielding)",
+                mint,
+                signature,
+            )
+            self._pending_no_block_time += 1
+            self.stats.events_skipped += 1
+            return None
+
+        # slot is always non-None when block_time_ms is non-None (invariant)
+        assert slot is not None  # type guard
+
+        wall_ms = _pp_now_ms()
+        data_staleness_ms = max(0, wall_ms - block_time_ms)
+
+        # Convert SOL (float from PumpPortal) → lamports (int).
+        # Money rule: integer base units only (data-models.md §0).
+        v_sol = msg.get("vSolInBondingCurve") or 0.0
+        sol_reserve_lamports = int(float(v_sol) * 1_000_000_000)
+
+        # Token reserves: pump.fun reports as float base units (6 decimals)
+        v_tokens = msg.get("vTokensInBondingCurve") or 0.0
+        token_reserve_base = int(float(v_tokens))
+
+        creator_wallet = msg.get("traderPublicKey") or ""
+
+        try:
+            event = LaunchEvent(
+                mint=mint,
+                venue_program_id=self._pump_program_id,
+                source=LaunchSource.PUMPFUN,
+                event_time=EventTime(
+                    slot=slot,
+                    block_time_ms=block_time_ms,
+                    wall_clock_ms=wall_ms,
+                ),
+                observation_slot=slot,
+                confirmation_slot=slot,
+                detection_transport=DetectionTransport.GEYSER,
+                sol_reserve_lamports=sol_reserve_lamports,
+                token_reserve_base=token_reserve_base,
+                token_decimals=_PUMP_TOKEN_DECIMALS,
+                initial_holders=1,  # creator counts as first holder
+                competitors=0,      # unknown from PumpPortal feed
+                creator_wallet=creator_wallet,
+                bundler_cluster_id=None,        # not available from PumpPortal
+                deploy_template_fingerprint=None,  # not available from PumpPortal
+                data_staleness_ms=data_staleness_ms,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "PumpPortalTransport: LaunchEvent construction failed "
+                "for new-token mint=%s: %s",
+                mint,
+                exc,
+            )
+            self.stats.decode_errors += 1
+            return None
+
+        sig_out = signature or f"pumpportal_create_{mint[:8]}"
+        return event, sig_out, EventKind.CREATE
+
+    async def _map_migration(
+        self,
+        msg: dict,
+        signature: str,
+        mint: str,
+    ) -> tuple | None:
+        """Map a subscribeMigration message to (LaunchEvent, sig, EventKind.WITHDRAW).
+
+        POINT-IN-TIME HONESTY (T-300a):
+        Returns None if on-chain block_time is unavailable.  Wall-clock is
+        NEVER substituted into event_time.
+        """
+        slot, block_time_ms = await self._get_slot_time(signature)
+        if block_time_ms is None:
+            logger.debug(
+                "PumpPortalTransport: no on-chain block_time for migration "
+                "mint=%s sig=%.16s… (T-300a: holding pending, not yielding)",
+                mint,
+                signature,
+            )
+            self._pending_no_block_time += 1
+            self.stats.events_skipped += 1
+            return None
+
+        assert slot is not None  # type guard
+
+        wall_ms = _pp_now_ms()
+        data_staleness_ms = max(0, wall_ms - block_time_ms)
+
+        v_sol = msg.get("vSolInBondingCurve") or 0.0
+        sol_reserve_lamports = int(float(v_sol) * 1_000_000_000)
+        v_tokens = msg.get("vTokensInBondingCurve") or 0.0
+        token_reserve_base = int(float(v_tokens))
+        creator_wallet = msg.get("traderPublicKey") or ""
+
+        try:
+            event = LaunchEvent(
+                mint=mint,
+                venue_program_id=self._pump_program_id,
+                source=LaunchSource.MIGRATION,
+                event_time=EventTime(
+                    slot=slot,
+                    block_time_ms=block_time_ms,
+                    wall_clock_ms=wall_ms,
+                ),
+                observation_slot=slot,
+                confirmation_slot=slot,
+                detection_transport=DetectionTransport.GEYSER,
+                sol_reserve_lamports=sol_reserve_lamports,
+                token_reserve_base=token_reserve_base,
+                token_decimals=_PUMP_TOKEN_DECIMALS,
+                initial_holders=0,
+                competitors=0,
+                creator_wallet=creator_wallet,
+                bundler_cluster_id=None,
+                deploy_template_fingerprint=None,
+                data_staleness_ms=data_staleness_ms,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "PumpPortalTransport: LaunchEvent construction failed "
+                "for migration mint=%s: %s",
+                mint,
+                exc,
+            )
+            self.stats.decode_errors += 1
+            return None
+
+        sig_out = signature or f"pumpportal_migrate_{mint[:8]}"
+        return event, sig_out, EventKind.WITHDRAW
+
+    # ------------------------------------------------------------------
+    # RPC enrichment
+    # ------------------------------------------------------------------
+
+    async def _get_slot_time(
+        self,
+        signature: str,
+    ) -> tuple[int | None, int | None]:
+        """Obtain (slot, block_time_ms) from RPC getTransaction.
+
+        Returns (None, None) when:
+          - enrich_via_rpc is False
+          - rpc_url is not set
+          - signature is absent
+          - RPC call fails or times out
+          - blockTime is absent/null/zero in the response
+
+        POINT-IN-TIME HONESTY (T-300a):
+        Returns (None, None) rather than ever substituting wall-clock into
+        block_time_ms.  The caller MUST NOT emit a LaunchEvent in this case.
+        """
+        if not self._enrich_via_rpc or not self._rpc_url or not signature:
+            return None, None
+
+        try:
+            import httpx
+        except ImportError:
+            logger.debug(
+                "PumpPortalTransport._get_slot_time: httpx not installed — "
+                "cannot enrich block_time.  Install httpx for RPC enrichment."
+            )
+            return None, None
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": next(_ws_rpc_id),
+            "method": "getTransaction",
+            "params": [
+                signature,
+                {
+                    "maxSupportedTransactionVersion": 0,
+                    "commitment": "confirmed",
+                    "encoding": "json",
+                },
+            ],
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                # rpc_url may contain an API key — never log it.
+                resp = await client.post(self._rpc_url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "PumpPortalTransport._get_slot_time(%.16s…): RPC error: %s",
+                signature,
+                exc,
+            )
+            return None, None
+
+        result = data.get("result")
+        if not isinstance(result, dict):
+            return None, None
+
+        slot_raw = result.get("slot")
+        block_time_raw = result.get("blockTime")
+
+        # T-300a: blockTime absent, null, or zero → return (None, None)
+        if slot_raw is None or block_time_raw is None or int(block_time_raw) <= 0:
+            return None, None
+
+        block_time_ms = int(block_time_raw) * 1_000
+        return int(slot_raw), block_time_ms
 
 
 class TransportPipeline:

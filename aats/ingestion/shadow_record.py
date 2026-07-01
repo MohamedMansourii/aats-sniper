@@ -276,8 +276,10 @@ async def _run(
     from aats.ingestion.registry import ProgramRegistry
     from aats.ingestion.store import InMemoryParquetBackend, PointInTimeStoreWriter, ShadowRecorder
     from aats.ingestion.transport import (
+        PUMPPORTAL_DEFAULT_WS_URL,
         EnhancedWsFallback,
         GeyserTransport,
+        PumpPortalTransport,
         ReplayTransport,
         TransportPipeline,
     )
@@ -371,9 +373,97 @@ async def _run(
             ws_url=ws_url,
             rpc_url=rpc_url,
         )
+    elif source == "pumpportal":
+        # PumpPortal: purpose-built pre-decoded pump.fun live feed.
+        # Uses a direct WS connection to wss://pumpportal.fun/api/data and
+        # optionally enriches events via RPC getTransaction for on-chain block_time.
+        #
+        # Credentials: NEVER hardcoded.
+        #   PUMPPORTAL_WS_URL — WS endpoint (default: wss://pumpportal.fun/api/data)
+        #   RPC_PRIMARY       — used for getTransaction block_time enrichment
+        pp_ws_url = os.environ.get("PUMPPORTAL_WS_URL", "") or PUMPPORTAL_DEFAULT_WS_URL
+        rpc_url = os.environ.get("RPC_PRIMARY", "")
+
+        try:
+            from aats.contracts.events import LaunchSource
+            pump_program_id = registry.program_id(LaunchSource.PUMPFUN)
+        except KeyError:
+            logger.error(
+                "PumpPortal source requires pump.fun in the program allowlist.  "
+                "Check config/program-allowlist.json — ensure the pump.fun entry "
+                "has status='active'."
+            )
+            raise
+
+        logger.info(
+            "SOURCE=pumpportal — purpose-built pre-decoded pump.fun live feed.  "
+            "WS endpoint: (URL not logged — may contain credentials).  "
+            "RPC enrichment: %s.  "
+            "DRY RUN ALWAYS: read-only, no signing, no capital.",
+            "ENABLED (RPC_PRIMARY set)" if rpc_url else "DISABLED (RPC_PRIMARY not set — events without block_time will be dropped per T-300a)",
+        )
+
+        pp_transport = PumpPortalTransport(
+            ws_url=pp_ws_url,
+            rpc_url=rpc_url,
+            pump_program_id=pump_program_id,
+            enrich_via_rpc=bool(rpc_url),
+        )
+
+        # Drive the pumpportal pipeline directly (no InstructionRouter needed
+        # since PumpPortalTransport yields typed events directly).
+        events_decoded = 0
+        start_wall_ms = int(time.time() * 1_000)
+
+        logger.info(
+            "Starting ingestion: source=%s out=%s max_events=%d first_k_slots=%d",
+            source, out_dir, max_events, first_k_slots,
+        )
+
+        async for event, sig, event_kind in pp_transport.events(last_slot=0):
+            await store_writer.write_launch_event(event, sig)
+            shadow_recorder.observe(event, event_kind)
+            events_decoded += 1
+            logger.debug(
+                "event[%d] mint=%s source=%s kind=%s slot=%d staleness=%dms",
+                events_decoded,
+                event.mint,
+                event.source,
+                event_kind,
+                event.event_time.slot,
+                event.data_staleness_ms,
+            )
+            if events_decoded >= max_events:
+                logger.info("Reached max_events=%d — stopping.", max_events)
+                break
+
+        shadow_recorder.flush_all(status="complete")
+        snapshots = backend.all_rows(dataset="shadow_snapshots")
+        for row in snapshots:
+            try:
+                payload = json.loads(row.get("payload_json", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                payload = {}
+            merged = {**payload, **{k: v for k, v in row.items() if k != "payload_json"}}
+            corpus.write_row(merged)
+        corpus.close()
+
+        elapsed_ms = int(time.time() * 1_000) - start_wall_ms
+        return {
+            "source": source,
+            "events_decoded": events_decoded,
+            "events_skipped": pp_transport.stats.events_skipped,
+            "decode_errors": pp_transport.stats.decode_errors,
+            "snapshots_recorded": len(snapshots),
+            "orphan_events": shadow_recorder.orphan_events_total,
+            "corpus_path": str(corpus.path),
+            "elapsed_ms": elapsed_ms,
+            "data_staleness_ms": pp_transport.stats.data_staleness_ms,
+        }
+
     else:
         raise ValueError(
-            f"Unknown --source value: {source!r}.  Choose 'replay', 'geyser', or 'ws'."
+            f"Unknown --source value: {source!r}.  Choose 'replay', 'geyser', 'ws', or 'pumpportal'."
         )
 
     pipeline = TransportPipeline(transport=transport, router=router)
@@ -519,14 +609,18 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--source",
-        choices=["replay", "geyser", "ws"],
+        choices=["replay", "geyser", "ws", "pumpportal"],
         default="replay",
         help=(
             "replay = deterministic offline demo (SYNTHETIC data, default).  "
             "geyser = live Geyser gRPC (requires GEYSER_ENDPOINT + GEYSER_TOKEN env).  "
             "ws = standard Solana logsSubscribe WS + RPC polling fallback "
             "(requires RPC_PRIMARY; WS_ENDPOINT optional, derived from RPC_PRIMARY if absent). "
-            "Works on a free-tier Helius RPC key — no paid gRPC needed."
+            "Works on a free-tier Helius RPC key — no paid gRPC needed.  "
+            "pumpportal = purpose-built pre-decoded pump.fun live feed via "
+            "wss://pumpportal.fun/api/data (free, no API key required).  "
+            "Optional: RPC_PRIMARY for getTransaction block_time enrichment (T-300a).  "
+            "Override endpoint with PUMPPORTAL_WS_URL env var."
         ),
     )
     parser.add_argument(
@@ -609,6 +703,15 @@ def main() -> None:
             "Requires RPC_PRIMARY env var (e.g. https://mainnet.helius-rpc.com/?api-key=<key>).  "
             "WS_ENDPOINT is derived from RPC_PRIMARY if not explicitly set.  "
             "DRY RUN ALWAYS: this module is READ-ONLY (no signing, no capital)."
+        )
+    elif args.source == "pumpportal":
+        logger.info(
+            "PUMPPORTAL MODE: purpose-built pre-decoded pump.fun live feed.  "
+            "Connects to wss://pumpportal.fun/api/data (override: PUMPPORTAL_WS_URL).  "
+            "Optional RPC_PRIMARY for getTransaction block_time enrichment (T-300a).  "
+            "DRY RUN ALWAYS: READ-ONLY (no signing, no capital, no OMS touch).  "
+            "HONESTY: events without on-chain block_time are DROPPED (T-300a) — "
+            "set RPC_PRIMARY for block_time enrichment."
         )
 
     stats = asyncio.run(

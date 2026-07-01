@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AATS — Infrastructure & Procurement Report</title>
+<style>
+  :root{
+    --ink:#1a1c23; --muted:#5b6172; --line:#e2e5ec; --soft:#f5f6f9;
+    --brand:#6d4aff; --brand2:#13c2c2; --teal:#0d9488;
+    --green:#0a7d32; --greenbg:#e7f6ec; --amber:#9a6700; --amberbg:#fff6e0;
+    --red:#b42318; --redbg:#fdeceb; --bluebg:#eaf1fe; --blue:#1d4ed8;
+  }
+  *{ box-sizing:border-box; }
+  html{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink); line-height:1.5; font-size:11pt; margin:0;
+  }
+  h1,h2,h3,h4{ line-height:1.2; color:var(--ink); }
+  h2{ font-size:18pt; margin:0 0 4px; padding-top:6px; border-bottom:3px solid var(--brand); padding-bottom:6px; }
+  h3{ font-size:13.5pt; margin:18px 0 6px; color:var(--brand); }
+  h4{ font-size:11.5pt; margin:12px 0 4px; }
+  p{ margin:7px 0; }
+  a{ color:var(--blue); text-decoration:none; word-break:break-word; }
+  small{ color:var(--muted); }
+  .muted{ color:var(--muted); }
+  .wrap{ padding:0 54px 40px; }
+  table{ width:100%; border-collapse:collapse; margin:10px 0 14px; font-size:9.7pt; }
+  th,td{ border:1px solid var(--line); padding:7px 9px; text-align:left; vertical-align:top; }
+  th{ background:var(--brand); color:#fff; font-weight:600; }
+  tbody tr:nth-child(even){ background:var(--soft); }
+  .tag{ display:inline-block; font-size:8.5pt; font-weight:700; padding:2px 8px; border-radius:20px; color:#fff; }
+  .t-green{ background:var(--green);} .t-amber{ background:var(--amber);} .t-red{ background:var(--red);} .t-blue{ background:var(--blue);} .t-grey{ background:#6b7280;}
+  .box{ border-radius:8px; padding:12px 16px; margin:12px 0; border:1px solid; break-inside:avoid; }
+  .rec{ background:var(--greenbg); border-color:#bfe3c9; }
+  .rec b{ color:var(--green); }
+  .warn{ background:var(--amberbg); border-color:#f0dca0; }
+  .warn b{ color:var(--amber); }
+  .danger{ background:var(--redbg); border-color:#f3c4bf; }
+  .danger b{ color:var(--red); }
+  .info{ background:var(--bluebg); border-color:#c5d8fb; }
+  .info b{ color:var(--blue); }
+  ul,ol{ margin:6px 0 10px; padding-left:20px; }
+  li{ margin:3px 0; }
+  .pros{ color:var(--green); } .cons{ color:var(--red); }
+  .page-break{ page-break-before:always; }
+  .cover{
+    background:linear-gradient(135deg,#2a1d6e 0%,#6d4aff 55%,#13c2c2 130%);
+    color:#fff; padding:90px 54px 60px; height:100vh; position:relative;
+  }
+  .cover h1{ color:#fff; font-size:34pt; margin:0 0 6px; letter-spacing:-0.5px; }
+  .cover .sub{ font-size:15pt; opacity:.95; font-weight:300; }
+  .cover .meta{ position:absolute; bottom:60px; left:54px; right:54px; font-size:10.5pt; opacity:.9; border-top:1px solid rgba(255,255,255,.3); padding-top:14px; }
+  .pill{ display:inline-block; background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.35); padding:5px 12px; border-radius:30px; font-size:9.5pt; margin:4px 6px 0 0; }
+  .toc{ font-size:11pt; }
+  .toc li{ margin:5px 0; }
+  .kpi{ display:flex; gap:14px; margin:14px 0; }
+  .kpi div{ flex:1; border:1px solid var(--line); border-radius:8px; padding:12px; background:var(--soft); }
+  .kpi b{ display:block; font-size:20pt; color:var(--brand); }
+  .center{ text-align:center; }
+  .small-note{ font-size:8.8pt; color:var(--muted); }
+  code{ background:var(--soft); padding:1px 5px; border-radius:4px; font-size:9.3pt; }
+  .roadmap td:first-child{ font-weight:700; white-space:nowrap; }
+  hr{ border:none; border-top:1px solid var(--line); margin:18px 0; }
+</style>
+</head>
+<body>
+
+<!-- ============ COVER ============ -->
+<div class="cover">
+  <div class="pill">CONFIDENTIAL · PREPARED FOR THE CEO</div>
+  <div class="pill">AATS SOLANA ULTRA-SNIPER</div>
+  <h1>Infrastructure &amp; Procurement Report</h1>
+  <div class="sub">What to buy, when to buy it, and how to spend for maximum ROI<br>— a staged, edge-gated execution plan.</div>
+  <div class="meta">
+    <b>Engagement:</b> AATS Solana Meme-Coin Ultra-Sniper &nbsp;·&nbsp; <b>Stage:</b> Pre-edge-proof (paper-proven)<br>
+    <b>Date:</b> 17 June 2026 &nbsp;·&nbsp; <b>Prepared by:</b> Agency Runtime (research-grounded, June 2026 pricing)<br>
+    <b>Core principle:</b> No spend outruns proof. Real capital stays disabled until the edge is proven on real data.
+  </div>
+</div>
+
+<div class="wrap">
+
+<!-- ============ TOC ============ -->
+<div class="page-break"></div>
+<h2>Contents</h2>
+<ol class="toc">
+  <li><b>Executive summary</b> — the one-page bottom line &amp; the single highest-ROI move</li>
+  <li><b>The reality check</b> — speed, data access, and the Phantom myth (read before spending)</li>
+  <li><b>The spending philosophy</b> — why staged, edge-gated spend is the only high-ROI path</li>
+  <li><b>TIER 0 — Prove the edge</b> (now): budget option vs. best-money-no-object stack</li>
+  <li><b>TIER 1 — Trade for real</b> (after edge proven): execution &amp; custody</li>
+  <li><b>TIER 2 — Optional enrichment</b> (sentiment / de-risk signals)</li>
+  <li><b>The "Do NOT buy" list</b> — where money gets burned</li>
+  <li><b>Master comparison tables</b> — costs, pros &amp; cons, links</li>
+  <li><b>Execution roadmap</b> — phase → spend → milestone</li>
+  <li><b>ROI framework</b> — how to decide every future purchase</li>
+  <li><b>Glossary</b> — plain-English definitions</li>
+  <li><b>Sources</b></li>
+</ol>
+
+<!-- ============ 1. EXEC SUMMARY ============ -->
+<div class="page-break"></div>
+<h2>1 · Executive Summary</h2>
+
+<p>The AATS bot is <b>fully built and paper-proven</b>. What stands between today and real trades is not more code — it is <b>proof that a real edge exists</b>, measured on real market data, <i>before</i> any capital is risked. This report tells you exactly what to acquire to get that proof, what to acquire to trade once proven, and — just as importantly — <b>what not to buy yet</b>.</p>
+
+<div class="kpi">
+  <div><b>$0</b><span>needed to start proving the edge right now (free real-time feed)</span></div>
+  <div><b>~$1–6k/mo</b><span>best-in-class edge-proof stack, ignoring budget</span></div>
+  <div><b>~$550–800/mo</b><span>+ SOL, realistic monthly cost once trading for real</span></div>
+</div>
+
+<div class="box rec">
+  <b>★ The single highest-ROI move:</b> Buy <b>Bitquery enterprise archival data</b> (a resolved historical universe of pump.fun launches) and run the edge proof <b>this week</b> instead of waiting weeks for live data to accrue. It is the one purchase that buys <i>time-to-answer</i> — the most valuable thing at this stage. Pair it with <b>Helius LaserStream (Professional, $999/mo)</b> for a no-gap live feed. Everything else can wait for the verdict.
+</div>
+
+<div class="box warn">
+  <b>⚠ The honest constraint:</b> Independent 2026 benchmarks show <b>only ~10% of Solana sniper bots are consistently profitable</b>. The edge is currently <b>UNPROVEN</b>. Money can buy a <i>faster, cleaner answer</i> to "does an edge exist?" — it cannot buy a <i>yes</i>. That is exactly why we prove before we spend on execution infrastructure.
+</div>
+
+<!-- ============ 2. REALITY CHECK ============ -->
+<div class="page-break"></div>
+<h2>2 · The Reality Check (read before spending a cent)</h2>
+<p>Three widely-sold myths cause the most wasted money in this space. Clearing them up protects your budget.</p>
+
+<h3>Myth 1 — "Microsecond" trading</h3>
+<div class="box danger">
+  <b>False — and a red flag.</b> Solana produces a block every <b>~400 milliseconds</b>. The fastest, most expensive bots on earth react in <b>sub-40ms</b>, and only with servers co-located next to validators. A strong retail setup reacts in <b>~50–300ms</b>. <b>Microsecond trading does not exist on Solana for anyone.</b> Any product promising "microseconds" is misleading you. The real game is <i>milliseconds, and being faster than rival bots</i> — not magic.
+</div>
+
+<h3>Myth 2 — "The AI already has a live feed"</h3>
+<p>The <b>bot</b> accesses live Solana data — through infrastructure <b>you provision</b>. This was already <b>proven</b>: on a free Helius key, the bot decoded <b>real pump.fun mainnet launches</b>, point-in-time correct. It is real — just rate-limited on the free tier. Upgrading the feed (this report) turns "real but slow" into "real and competitive."</p>
+
+<h3>Myth 3 — "You need Phantom"</h3>
+<div class="box info">
+  <b>You do not need Phantom — at all.</b> Phantom is a <i>human</i> browser wallet. An automated bot signs with its <b>own dedicated keypair</b> inside an isolated signer (by design: your key never lives in Phantom or in the bot's memory). <b>Do not buy, connect, or worry about Phantom.</b>
+</div>
+
+<table>
+  <thead><tr><th>What you asked about</th><th>Can the bot access it?</th><th>How</th></tr></thead>
+  <tbody>
+    <tr><td><b>pump.fun</b> live launches &amp; data</td><td><span class="tag t-green">YES</span></td><td>Decoded <b>directly from the blockchain</b> (every launch, no middleman) + optional Bitquery/PumpPortal feeds</td></tr>
+    <tr><td><b>Jupiter</b> live quotes/routing</td><td><span class="tag t-green">YES</span></td><td>Wired to the <b>Jupiter v6 API</b> for quotes &amp; exits</td></tr>
+    <tr><td><b>All memecoins + token info</b></td><td><span class="tag t-green">YES</span></td><td>On-chain decode + enrichment APIs (Birdeye / DexScreener)</td></tr>
+    <tr><td><b>Phantom</b></td><td><span class="tag t-grey">N/A</span></td><td>Not used by bots. The bot has its own signer. Ignore it.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============ 3. SPENDING PHILOSOPHY ============ -->
+<div class="page-break"></div>
+<h2>3 · The Spending Philosophy — Staged, Edge-Gated Spend</h2>
+<p>The whole architecture is built to <b>spend money only after the previous spend has been justified by proof</b>. This is the highest-ROI structure possible for a venture with an unproven edge.</p>
+
+<table>
+  <thead><tr><th>Stage</th><th>You spend on…</th><th>Unlocked only after…</th><th>Monthly $</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag t-green">TIER 0</span> Prove the edge</td><td>A clean real-data feed + historical corpus</td><td>Now — no precondition</td><td>$0 → ~$1–6k</td></tr>
+    <tr><td><span class="tag t-amber">TIER 1</span> Trade for real</td><td>Premium RPC/Geyser, VPS, custody, Jito tips, SOL</td><td><b>Edge proven GO</b> on recorded data</td><td>~$550–800 + SOL</td></tr>
+    <tr><td><span class="tag t-blue">TIER 2</span> Enrichment</td><td>Social/news/sentiment APIs (de-risk only)</td><td>Optional — never required to trade</td><td>$0 → ~$250</td></tr>
+    <tr><td><span class="tag t-red">PREMIUM</span> Compete</td><td>Dedicated/staked nodes, ShredStream, co-lo</td><td><b>Edge proven AND scaling capital</b></td><td>~$3–6k+</td></tr>
+  </tbody>
+</table>
+
+<div class="box rec">
+  <b>The ROI rule in one line:</b> <i>Every dollar of spend must be unlocked by a milestone the previous dollar proved.</i> Spending on Tier-1 or Premium infrastructure <b>before</b> the edge is proven is the #1 way money is burned in this business.
+</div>
+
+<!-- ============ 4. TIER 0 ============ -->
+<div class="page-break"></div>
+<h2>4 · TIER 0 — Prove the Edge (do this now)</h2>
+<p><b>Goal:</b> record a <b>clean, complete, point-in-time-correct corpus</b> of genuine launches <i>with their outcomes</i>, then run the leak-free walk-forward edge proof. For this phase the priority is <b>fidelity + outcomes</b>, <i>not</i> raw speed.</p>
+
+<h3>4.1 — The budget path (recommended to start: ~$0–49/mo)</h3>
+<table>
+  <thead><tr><th>Option</th><th>What it gives</th><th>Cost</th><th>Link</th></tr></thead>
+  <tbody>
+    <tr><td><b>PumpPortal</b> WebSocket</td><td>Free real-time pump.fun new-token + trade stream (purpose-built). Best free option for recording.</td><td><span class="tag t-green">Free</span></td><td><a href="https://pumpportal.fun/data-api/real-time/">pumpportal.fun/data-api</a></td></tr>
+    <tr><td><b>Bitquery</b> free tier</td><td>Real-time + some historical (GraphQL/WS). Good for a first corpus.</td><td><span class="tag t-green">Free → paid</span></td><td><a href="https://bitquery.io/products/pumpfun-api">bitquery.io/products/pumpfun-api</a></td></tr>
+    <tr><td><b>Helius Developer</b></td><td>Better rate limits than free; still WS/RPC (not gRPC). Marginal upgrade for recording.</td><td>$49/mo</td><td><a href="https://www.helius.dev/pricing">helius.dev/pricing</a></td></tr>
+  </tbody>
+</table>
+<p class="muted"><b>Recommendation:</b> start at <b>$0</b> with PumpPortal's free WebSocket. It fixes the exact bug we hit (the free Solana WS not pushing reliably) and lets you record a clean corpus for free. <b>Do not spend until the edge proof says GO.</b></p>
+
+<h3>4.2 — The best stack, ignoring budget (highest fidelity + fastest answer)</h3>
+<p>For an edge proof you can <b>fully trust</b>, the best is a <b>two-source stack</b> — a fidelity leg and a historical leg — because you need both <i>zero dropped events</i> and <i>launches that have already resolved</i> (so you can label outcomes without waiting weeks).</p>
+
+<h4>A · Live full-firehose recorder <span class="muted">(fidelity leg)</span></h4>
+<table>
+  <thead><tr><th>Provider</th><th>Why</th><th>Cost</th><th>Pros / Cons</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>Triton One</b><br>Dedicated Yellowstone gRPC</td>
+      <td>Triton <i>created</i> Yellowstone gRPC — the <b>reference-quality</b> full-firehose implementation, best at backpressure without dropping transactions.</td>
+      <td>from ~$2,900/mo<br><span class="small-note">(custom/enterprise)</span></td>
+      <td><span class="pros">+ Reference fidelity, full firehose, no drops</span><br><span class="cons">− Highest cost; more ops</span></td>
+    </tr>
+    <tr>
+      <td><b>Helius LaserStream</b><br>Professional plan</td>
+      <td>Drop-in Yellowstone replacement; <b>guarantees no gaps</b> (with replay), 24h historical replay, auto-reconnect, zero node maintenance.</td>
+      <td>$999/mo</td>
+      <td><span class="pros">+ No-gap guarantee, lightest ops, the bot already speaks it</span><br><span class="cons">− Slightly less "raw" than a dedicated node</span></td>
+    </tr>
+  </tbody>
+</table>
+<p class="small-note">The bot's <code>GeyserTransport</code> + vendored Yellowstone proto + <code>INFRA_TIER=dedicated_geyser</code> are already built for this. Money just unlocks a working <code>GEYSER_ENDPOINT</code>; the code path exists.</p>
+
+<h4>B · Historical archival backfill <span class="muted">(the highest-leverage buy)</span></h4>
+<table>
+  <thead><tr><th>Provider</th><th>Why it's the killer purchase</th><th>Cost</th><th>Pros / Cons</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>Bitquery Enterprise</b><br>(archival dumps)</td>
+      <td>Bulk dumps of <b>all pump.fun + PumpSwap launches &amp; trades since May 2024</b> to your own S3 / Snowflake / BigQuery. ~157B Solana rows/week. Gives you <b>thousands of already-resolved launches today</b> → edge proof runs <b>this week</b>, not in 6 weeks.</td>
+      <td>Custom<br><span class="small-note">(enterprise quote)</span></td>
+      <td><span class="pros">+ Collapses weeks of waiting into days; resolved outcomes for labels; cross-checks the live feed</span><br><span class="cons">− Custom pricing; you must still enforce no-lookahead in the backtest</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>C · Earliest-signal overlay <span class="muted">(optional, for honesty)</span></h4>
+<p><b>Jito ShredStream</b> on the live recorder sees swap activity <b>~50–100ms earlier</b> than Yellowstone gRPC. Already wired (<code>SHREDSTREAM_ENDPOINT</code>). For the edge proof it matters because it records <i>how early you could have acted</i> — which directly affects whether an edge exists. <span class="small-note">(Ignore "2 minutes earlier" marketing claims — the honest figure is 50–100ms.)</span></p>
+
+<h3>4.3 — Why this stack is the best for corpus quality</h3>
+<table>
+  <thead><tr><th>Edge-proof requirement</th><th>How the stack delivers it</th></tr></thead>
+  <tbody>
+    <tr><td><b>Completeness</b> (no survivorship gaps)</td><td>Triton/LaserStream full firehose — no rate-limit drops; every genuine launch captured</td></tr>
+    <tr><td><b>Outcomes to label NOW</b></td><td>Bitquery archival → resolved history, no waiting for live accrual</td></tr>
+    <tr><td><b>Point-in-time honesty</b> (no train/serve skew)</td><td>Record on the <i>exact production gRPC path</i> you'll later trade on</td></tr>
+    <tr><td><b>Bug / leak detection</b></td><td>Two independent sources (live vs archival) cross-check the decoder</td></tr>
+    <tr><td><b>Earliest-detectable realism</b></td><td>ShredStream overlay timestamps the true first-seeable moment</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <b>What money still cannot buy here:</b> <span class="cons">(1)</span> Clean data ≠ a leak-free backtest — the purged/embargoed walk-forward rigor is what makes the verdict trustworthy. <span class="cons">(2)</span> The verdict can still be <b>NO-GO</b>. You are buying a faster, cleaner <i>answer</i> — not a positive one.
+</div>
+
+<!-- ============ 5. TIER 1 ============ -->
+<div class="page-break"></div>
+<h2>5 · TIER 1 — Trade For Real (only after edge proven)</h2>
+<p>Unlocked <b>only</b> when the edge proof returns GO on recorded data. This is the execution + custody layer.</p>
+<table>
+  <thead><tr><th>Item</th><th>Why</th><th>Cost</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><b>Premium RPC + Geyser</b><br>Helius Business / Pro (or Triton)</td><td>Low-latency real-time firehose (LaserStream gRPC). The "real but slow → fast enough" upgrade.</td><td>$499–999/mo</td><td>Business ($499) unlocks LaserStream gRPC (10 concurrent connections, from Apr 2026)</td></tr>
+    <tr><td><b>Low-latency VPS</b></td><td>Server near the Jito block engine / validators (e.g. Frankfurt, Amsterdam, NY) to cut network hops.</td><td>$50–150/mo</td><td>Cloud VPS; bare-metal co-lo costs more</td></tr>
+    <tr><td><b>Jito (bundles)</b></td><td>Bundle submission + MEV protection.</td><td><b>Per-trade SOL tips</b></td><td>No subscription — dynamic tips priced in SOL per trade</td></tr>
+    <tr><td><b>HashiCorp Vault</b></td><td>Holds the wallet secret (the bot's custody design uses it).</td><td>$0 self-host</td><td>HCP Vault Cloud is a paid alternative</td></tr>
+    <tr><td><b>Funded trade wallet</b></td><td>The actual SOL you trade.</td><td><b>Your capital</b></td><td>Design <b>caps it at ≤ 2 SOL</b> at launch to bound risk (blast-radius control)</td></tr>
+  </tbody>
+</table>
+<div class="box info">
+  <b>Capital staging (built into the bot):</b> paper → <b>tiny-real</b> (e.g. $50–200 risk) → scale. Even after a GO verdict, the first real trades are deliberately tiny, to confirm simulation matches reality (slippage, land-rate, adverse selection) before any meaningful size.
+</div>
+
+<!-- ============ 6. TIER 2 ============ -->
+<h2>6 · TIER 2 — Optional Enrichment (not required to trade)</h2>
+<p>The bot runs <b>fully without any of these</b> (it ships with offline mocks). They only add the "SLOW-loop" social/news layer, which can <b>only lower conviction (de-risk)</b> — it never trades for you. Add later, if ever.</p>
+<table>
+  <thead><tr><th>Service</th><th>Role</th><th>Cost</th><th>Link</th></tr></thead>
+  <tbody>
+    <tr><td><b>DexScreener</b></td><td>Token price/liquidity enrichment</td><td><span class="tag t-green">Free</span></td><td><a href="https://docs.dexscreener.com/">docs.dexscreener.com</a></td></tr>
+    <tr><td><b>Birdeye</b></td><td>Deeper token/market data</td><td>Free tier + paid</td><td><a href="https://docs.birdeye.so/">docs.birdeye.so</a></td></tr>
+    <tr><td><b>X (Twitter) API</b></td><td>Social sentiment (recent search)</td><td>~$200/mo (Basic)<br><span class="small-note">verify current</span></td><td><a href="https://developer.twitter.com/">developer.twitter.com</a></td></tr>
+    <tr><td><b>Reddit API</b></td><td>Subreddit sentiment</td><td><span class="tag t-green">Free</span></td><td><a href="https://www.reddit.com/dev/api/">reddit.com/dev/api</a></td></tr>
+    <tr><td><b>Discord bot</b></td><td>Alpha-channel monitoring (allowlist only)</td><td><span class="tag t-green">Free</span></td><td><a href="https://discord.com/developers/applications">discord.com/developers</a></td></tr>
+    <tr><td><b>NewsAPI.org</b></td><td>Breaking-news de-risk signal</td><td>Free (100/day)</td><td><a href="https://newsapi.org/">newsapi.org</a></td></tr>
+    <tr><td><b>LLM key</b> (OpenAI / local Ollama)</td><td>SLOW-loop reasoner (de-risk adjudication only)</td><td>Usage-based / $0 local</td><td><a href="https://platform.openai.com/">platform.openai.com</a></td></tr>
+  </tbody>
+</table>
+
+<!-- ============ 7. DO NOT BUY ============ -->
+<h2>7 · The "Do NOT Buy (yet)" List — where money gets burned</h2>
+<table>
+  <thead><tr><th>Tempting purchase</th><th>Why NOT (yet)</th></tr></thead>
+  <tbody>
+    <tr><td><b>Dedicated node ~$2,900/mo + staked RPC + co-location</b></td><td>This is the <i>competitive</i> tier the top ~10% run. <b>Burning ~$3k/mo before the edge is proven is setting money on fire.</b> Only after GO + scaling.</td></tr>
+    <tr><td><b>Phantom / any wallet product</b></td><td>Not used by bots. The bot has its own signer.</td></tr>
+    <tr><td><b>Any "sniper bot" subscription / SaaS</b></td><td>You are building your own — paying for a black box duplicates and undermines that.</td></tr>
+    <tr><td><b>Premium social/sentiment APIs up front</b></td><td>SLOW-loop, de-risk-only. They never create edge. Add post-GO if at all.</td></tr>
+    <tr><td><b>"Microsecond" anything</b></td><td>Doesn't exist on Solana. A marketing red flag.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============ 8. MASTER TABLE ============ -->
+<div class="page-break"></div>
+<h2>8 · Master Comparison Table — Costs, Pros &amp; Cons, Links</h2>
+<table>
+  <thead><tr><th>Provider / Item</th><th>Tier</th><th>Cost</th><th class="pros">Pros</th><th class="cons">Cons</th></tr></thead>
+  <tbody>
+    <tr><td><b>PumpPortal</b> WS</td><td>0</td><td>Free</td><td>Purpose-built pump.fun real-time; zero cost; fast to wire</td><td>pump.fun-centric; not a full-chain firehose</td></tr>
+    <tr><td><b>Bitquery</b> (free)</td><td>0</td><td>Free→paid</td><td>Real-time + historical; multi-channel (WS/gRPC/Kafka)</td><td>Free tier rate-limited</td></tr>
+    <tr><td><b>Bitquery</b> Enterprise archival</td><td>0★</td><td>Custom</td><td>Resolved history since 2024 → edge proof in days; S3/Snowflake dumps</td><td>Custom price; lookahead still your responsibility</td></tr>
+    <tr><td><b>Helius</b> Developer</td><td>0</td><td>$49/mo</td><td>Cheap rate-limit bump</td><td>No gRPC; marginal for recording</td></tr>
+    <tr><td><b>Helius</b> Business</td><td>1</td><td>$499/mo</td><td>Unlocks LaserStream gRPC (10 conns); great value</td><td>Data add-ons are Pro-only</td></tr>
+    <tr><td><b>Helius</b> LaserStream Pro</td><td>0★/1</td><td>$999/mo</td><td>No-gap guarantee; 24h replay; zero ops; bot already speaks it</td><td>Pricier than Business</td></tr>
+    <tr><td><b>Triton One</b> dedicated gRPC</td><td>0★/Prem</td><td>~$2,900/mo</td><td>Reference Yellowstone fidelity; best firehose/backpressure</td><td>Highest cost; more ops</td></tr>
+    <tr><td><b>Helius</b> dedicated node</td><td>Prem</td><td>from ~$2,900/mo</td><td>Designed for gRPC streaming; staked-adjacent</td><td>No webhooks/archival; combine w/ shared plan</td></tr>
+    <tr><td><b>Jito</b> bundles + ShredStream</td><td>1</td><td>SOL tips / infra</td><td>MEV protection; earliest shred view (50–100ms)</td><td>Per-trade tips; ShredStream needs proper infra</td></tr>
+    <tr><td><b>Low-latency VPS</b></td><td>1</td><td>$50–150/mo</td><td>Cuts hops to block engine</td><td>Region choice matters; bare-metal costs more</td></tr>
+    <tr><td><b>HashiCorp Vault</b></td><td>1</td><td>$0 self-host</td><td>Proper secret custody; in the design</td><td>Self-host ops; HCP cloud paid</td></tr>
+    <tr><td><b>DexScreener</b></td><td>2</td><td>Free</td><td>Free enrichment</td><td>Rate limits</td></tr>
+    <tr><td><b>Birdeye</b></td><td>2</td><td>Free→paid</td><td>Rich market data</td><td>Paid tiers for volume</td></tr>
+    <tr><td><b>X API</b> Basic</td><td>2</td><td>~$200/mo</td><td>Social sentiment input</td><td>De-risk only; never edge; price volatile</td></tr>
+  </tbody>
+</table>
+<p class="small-note">★ = also valid as the best money-no-object choice for the edge-proof phase.</p>
+
+<!-- ============ 9. ROADMAP ============ -->
+<div class="page-break"></div>
+<h2>9 · Execution Roadmap — Phase → Spend → Milestone</h2>
+<table class="roadmap">
+  <thead><tr><th>Phase</th><th>What happens</th><th>Spend</th><th>Gate to next</th><th>Time</th></tr></thead>
+  <tbody>
+    <tr><td>1. Fix feed</td><td>Switch ingestion to a reliable real-time source; fix today's bug</td><td>$0 (PumpPortal)</td><td>Clean events flowing</td><td>2–5 days</td></tr>
+    <tr><td>2. Record corpus</td><td>Accumulate genuine launches + outcomes <span class="muted">(or buy Bitquery archival to skip the wait)</span></td><td>$0 → custom</td><td>Enough labeled launches</td><td>Days–6 wks</td></tr>
+    <tr><td>3. <b>Edge proof</b> ⛔</td><td>Leak-free walk-forward; model vs baseline, net of all costs</td><td>—</td><td><b>GO / NO-GO</b></td><td>1–3 wks</td></tr>
+    <tr><td>4. Build execution</td><td>Real signer, custody, live swap landing, tip economics, security audit</td><td>Eng time</td><td>Security PASS</td><td>2–4 wks</td></tr>
+    <tr><td>5. Tiny-real</td><td>First real trades at minimal size; confirm sim = reality</td><td>RPC+VPS+SOL</td><td>Sim matches live</td><td>1–2 wks</td></tr>
+    <tr><td>6. Your gates</td><td>Funding, jurisdiction, sign-off</td><td>Your capital</td><td>Scale decision</td><td>Your call</td></tr>
+  </tbody>
+</table>
+<div class="box danger">
+  <b>⛔ Phase 3 is the boss gate.</b> If the edge proof returns NO-GO, you <b>stop or pivot</b> — you do not advance to Phases 4–6. This is the design protecting your capital. Everything before Phase 3 is intentionally cheap so a NO-GO costs you very little.
+</div>
+
+<!-- ============ 10. ROI FRAMEWORK ============ -->
+<h2>10 · ROI Framework — How to Decide Every Future Purchase</h2>
+<p>Before any spend, ask these four questions in order. If the answer to any is "no", don't buy yet.</p>
+<ol>
+  <li><b>Is this unlocked by a milestone I've already proven?</b> (e.g., don't buy execution infra before edge proof.)</li>
+  <li><b>Does it move a metric that decides GO/NO-GO, or does it only help <i>after</i> GO?</b> Edge-proof spend (Tier 0) is the highest ROI because it produces the <i>decision</i>. Post-GO spend only matters if there's a GO.</li>
+  <li><b>Is it the cheapest thing that fully answers the question?</b> A free feed that proves the edge beats a $3k feed that proves the same edge.</li>
+  <li><b>Does it reduce risk or only chase speed?</b> Custody, caps, and the safety stack are always worth it. Raw speed is only worth it once an edge exists to exploit.</li>
+</ol>
+<div class="kpi">
+  <div><b>Highest ROI</b><span>Tier-0 edge-proof data — it produces the GO/NO-GO decision itself</span></div>
+  <div><b>Conditional ROI</b><span>Tier-1 execution &amp; custody — valuable only after a GO verdict</span></div>
+  <div><b>Negative ROI (now)</b><span>Premium co-lo / dedicated nodes before edge is proven</span></div>
+</div>
+
+<!-- ============ 11. GLOSSARY ============ -->
+<div class="page-break"></div>
+<h2>11 · Glossary (plain English)</h2>
+<table>
+  <tbody>
+    <tr><td><b>RPC</b></td><td>The "phone line" your bot uses to talk to the Solana blockchain (read data, send trades).</td></tr>
+    <tr><td><b>Geyser / Yellowstone gRPC</b></td><td>A high-speed "firehose" stream of everything happening on-chain, in real time. The bot is built for this.</td></tr>
+    <tr><td><b>LaserStream</b></td><td>Helius's managed version of that firehose, with a "no missed data" guarantee.</td></tr>
+    <tr><td><b>ShredStream</b></td><td>An even-earlier view of transactions (50–100ms sooner), via Jito.</td></tr>
+    <tr><td><b>Jito / bundles / tips</b></td><td>A system to submit trades with priority and MEV protection; you pay a small "tip" in SOL per trade.</td></tr>
+    <tr><td><b>SWQoS (stake-weighted QoS)</b></td><td>Priority access to validators based on stake — how pro bots get their trades in first.</td></tr>
+    <tr><td><b>Edge</b></td><td>A real, repeatable money-making advantage — <i>after</i> all costs (fees, tips, slippage). The thing we must prove.</td></tr>
+    <tr><td><b>Edge proof / walk-forward</b></td><td>A rigorous historical test that the strategy beats a simple baseline without "cheating" by seeing the future (no lookahead).</td></tr>
+    <tr><td><b>Point-in-time / no lookahead</b></td><td>Only using information that was actually available at the moment of decision. Critical for an honest test.</td></tr>
+    <tr><td><b>Corpus</b></td><td>The recorded dataset of launches the edge proof runs on.</td></tr>
+    <tr><td><b>DRY_RUN</b></td><td>The hard safety switch: the bot simulates everything and touches no real money until you explicitly authorize it.</td></tr>
+    <tr><td><b>Custody / signer / Vault</b></td><td>How the trading key is stored and used safely, isolated from the rest of the bot.</td></tr>
+    <tr><td><b>Co-location</b></td><td>Renting a server physically near the validators to shave milliseconds. Expensive; only worth it once an edge exists.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============ 12. SOURCES ============ -->
+<h2>12 · Sources</h2>
+<ul>
+  <li><a href="https://www.helius.dev/pricing">Helius Pricing</a> — plan tiers ($0 / $49 / $499 / $999), dedicated nodes</li>
+  <li><a href="https://www.helius.dev/docs/billing/plans">Helius Plans &amp; LaserStream</a> — gRPC access, data add-ons</li>
+  <li><a href="https://www.helius.dev/laserstream">Helius LaserStream</a> — no-gap streaming, replay</li>
+  <li><a href="https://www.helius.dev/docs/laserstream/laserstream-vs-dedicated-nodes">LaserStream vs Dedicated Nodes</a> — Triton reference comparison</li>
+  <li><a href="https://bitquery.io/products/pumpfun-api">Bitquery pump.fun API</a> &amp; <a href="https://bitquery.io/blog/solana-pumpfun-volume-four-delivery-channels">delivery channels (157B rows/wk)</a></li>
+  <li><a href="https://docs.bitquery.io/docs/blockchain/Solana/historical-aggregate-data/">Bitquery historical data</a> — backtesting, since May 2024</li>
+  <li><a href="https://pumpportal.fun/data-api/real-time/">PumpPortal real-time data API</a> — free WebSocket</li>
+  <li><a href="https://rpcfast.com/blog/solana-slot-time-explained">Solana 400ms slot time</a> — why microseconds are a myth</li>
+  <li><a href="https://dysnix.com/blog/complete-stack-competitive-solana-sniper-bots">Dysnix — 2026 sniper stack</a> (sub-40ms; ~10% profitable)</li>
+  <li><a href="https://dysnix.com/blog/solana-rpc-strategy-and-infrastructure-for-hft-bots">Dysnix — RPC/HFT infrastructure</a> (ShredStream 50–100ms)</li>
+  <li><a href="https://yavorovych.medium.com/10-solana-infrastructure-providers-compared-what-i-found-after-testing-them-in-2026-b026970c6ccd">10 Solana infra providers compared (2026)</a></li>
+</ul>
+
+<hr>
+<p class="small-note"><b>Disclaimer.</b> Pricing reflects publicly listed figures as of June 2026 and changes frequently — confirm at the vendor links before purchasing. Enterprise/custom quotes (Triton, Bitquery archival) require contacting sales. This report is decision-support, not financial advice. The core safety invariant stands: <b>real capital remains disabled until the edge is proven on recorded data and you explicitly authorize it.</b></p>
+
+</div>
+</body>
+</html>
