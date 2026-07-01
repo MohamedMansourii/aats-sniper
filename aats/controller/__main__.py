@@ -714,18 +714,229 @@ async def _run(
     # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
+    # 11b. Feed source selector — read at runtime so tests can monkeypatch
+    #      AATS_FEED_SOURCE before calling _run().
+    # ------------------------------------------------------------------
+    feed_source: str = os.environ.get("AATS_FEED_SOURCE", "synthetic").lower()
+    if feed_source not in ("synthetic", "pumpportal"):
+        log.warning(
+            "AATS_FEED_SOURCE=%r not recognised; falling back to 'synthetic'. "
+            "Valid values: 'synthetic' (default) | 'pumpportal'.",
+            feed_source,
+        )
+        feed_source = "synthetic"
+
+    # ------------------------------------------------------------------
+    # 11c. PumpPortal feed task — real mainnet launches in SHADOW/PAPER mode.
+    #
+    # HARD RULES (all enforced by this task):
+    #   - SimulationVenue only; NO real venue, NO signer, NO real capital.
+    #   - event_time.block_time_ms from transport (on-chain). NEVER wall-clock.
+    #   - Frames carry synthetic=False + provenance="live_shadow".
+    #   - PUMPPORTAL_WS_URL and RPC_PRIMARY are NEVER logged (may contain keys).
+    #   - Feed drop / reconnect handled by PumpPortalTransport internally.
+    #   - CancelledError propagates so shutdown is clean.
+    # ------------------------------------------------------------------
+    async def pumpportal_feed_task() -> None:
+        """Consume real PumpPortal launches → existing SNIPE/FAST/SLOW pipeline.
+
+        Uses PumpPortalTransport (same as shadow_record --source=pumpportal).
+        Each decoded (LaunchEvent, sig, EventKind) is forwarded to the
+        ControllerOrchestrator which runs it through the full paper pipeline
+        against SimulationVenue — no real submission, no real capital.
+
+        FeedBus frames carry:
+          synthetic=False         — REAL on-chain launch event
+          provenance="live_shadow" — real launch, paper/SimulationVenue execution
+
+        Point-in-time: frame block_time_ms is event.event_time.block_time_ms
+        (on-chain slot time from RPC getTransaction enrichment).
+        Wall-clock is NEVER substituted (T-300a).
+        """
+        # Lazy imports so patching in tests works (imports execute at call time,
+        # after test patches are active).
+        import pathlib as _pathlib
+
+        from aats.contracts.events import LaunchSource
+        from aats.ingestion.registry import ProgramRegistry
+        from aats.ingestion.transport import (
+            PUMPPORTAL_DEFAULT_WS_URL,
+            PumpPortalTransport,
+        )
+
+        # Credentials from env ONLY — never logged (may contain API keys).
+        pp_ws_url: str = (
+            os.environ.get("PUMPPORTAL_WS_URL", "") or PUMPPORTAL_DEFAULT_WS_URL
+        )
+        rpc_url: str = os.environ.get("RPC_PRIMARY", "")
+
+        if not rpc_url:
+            log.warning(
+                "AATS_FEED_SOURCE=pumpportal: RPC_PRIMARY is not set. "
+                "Per T-300a (no wall-clock substitution), LaunchEvents without "
+                "on-chain block_time will be dropped. "
+                "Set RPC_PRIMARY to an HTTP RPC endpoint for block_time enrichment. "
+                "(URL is not logged — may contain an API key.)"
+            )
+
+        # Resolve the pump.fun program ID from the allowlist registry.
+        # This is offline (verifier=None) — no live getAccountInfo call here.
+        try:
+            _project_root = _pathlib.Path(__file__).resolve().parent.parent.parent
+            _allowlist = _project_root / "config" / "program-allowlist.json"
+            _registry = ProgramRegistry.from_allowlist(
+                _allowlist,
+                verifier=None,           # offline; live verify is boot-time only
+                filter_active_only=True,
+            )
+            _pump_program_id = _registry.program_id(LaunchSource.PUMPFUN)
+        except Exception as exc:
+            log.error(
+                "pumpportal_feed_task: failed to resolve pump_program_id from "
+                "allowlist (%s). No PumpPortal events will be processed. "
+                "Check config/program-allowlist.json.",
+                exc,
+            )
+            # Wait for shutdown rather than crashing the controller.
+            await _shutdown_event.wait()
+            return
+
+        pp_transport = PumpPortalTransport(
+            ws_url=pp_ws_url,           # NEVER logged
+            rpc_url=rpc_url,            # NEVER logged
+            pump_program_id=_pump_program_id,
+            enrich_via_rpc=bool(rpc_url),
+        )
+
+        _pp_launch_count = 0
+        log.info(
+            "pumpportal_feed_task: started — REAL mainnet launches evaluated "
+            "in PAPER mode (SimulationVenue, no real capital). "
+            "RPC enrichment: %s. "
+            "Frames will carry synthetic=False + provenance=live_shadow.",
+            "ENABLED" if rpc_url else (
+                "DISABLED (T-300a: events without on-chain block_time are dropped)"
+            ),
+        )
+
+        try:
+            async for _event, _sig, _event_kind in pp_transport.events(last_slot=0):
+                if _shutdown_event.is_set():
+                    break
+                _pp_launch_count += 1
+
+                try:
+                    _result = orchestrator.on_launch_event(_event)
+                    _signal = _result.get("signal")
+                    _snipe = _result.get("snipe")
+                    _fill_landed: bool = getattr(_snipe, "landed", False)
+                    _fill_tokens: int = getattr(_snipe, "tokens_out", 0)
+
+                    # Point-in-time: block_time_ms ONLY from on-chain event_time.
+                    # The frame's ts field is wall-clock publication time (monitoring);
+                    # block_time_ms is the AUTHORITATIVE event clock (C-5, T-300a).
+                    await _publish_snipe_event(
+                        feed_bus,
+                        bus_producer,
+                        "snipe_event",
+                        {
+                            "mint": _event.mint,
+                            "launch_count": _pp_launch_count,
+                            "slot": _event.event_time.slot,
+                            # On-chain block_time — NEVER wall-clock (T-300a / C-5).
+                            "block_time_ms": _event.event_time.block_time_ms,
+                            "sol_reserve_lamports": _event.sol_reserve_lamports,
+                            "token_reserve_base": _event.token_reserve_base,
+                            "signal_p": (
+                                round(_signal.p_calibrated, 4) if _signal else None
+                            ),
+                            "signal_surface": _signal.surface if _signal else None,
+                            "snipe_result": (
+                                _snipe
+                                if isinstance(_snipe, str)
+                                else ("filled" if _fill_landed else "no_fill")
+                            ),
+                            "fill_landed": _fill_landed,
+                            "fill_tokens_out": _fill_tokens,
+                            "open_positions": len(state_store.load_all_positions()),
+                            # REAL on-chain launch event evaluated in paper mode.
+                            "synthetic": False,
+                            "provenance": "live_shadow",
+                        },
+                    )
+
+                    log.info(
+                        "[REAL] #%d mint=%.20s kind=%s slot=%d snipe=%s open=%d",
+                        _pp_launch_count,
+                        _event.mint,
+                        _event_kind,
+                        _event.event_time.slot,
+                        (
+                            _snipe
+                            if isinstance(_snipe, str)
+                            else getattr(_snipe, "reason", "??")
+                        ),
+                        len(state_store.load_all_positions()),
+                    )
+
+                except Exception as _exc:
+                    # Non-fatal per-event error: log and continue.
+                    log.error(
+                        "[REAL] #%d event error: %s",
+                        _pp_launch_count,
+                        _exc,
+                        exc_info=True,
+                    )
+
+        except asyncio.CancelledError:
+            log.info(
+                "pumpportal_feed_task: cancelled after %d launches.",
+                _pp_launch_count,
+            )
+            raise
+        except Exception as _task_exc:
+            # Fatal transport error: log and let the task exit.
+            # The controller continues (fast/slow loops unaffected).
+            log.error(
+                "pumpportal_feed_task: fatal error after %d launches: %s",
+                _pp_launch_count,
+                _task_exc,
+                exc_info=True,
+            )
+
+        log.info(
+            "pumpportal_feed_task: exited after %d launches.", _pp_launch_count
+        )
+
+    # ------------------------------------------------------------------
     # 12. Assemble and run all tasks
     # ------------------------------------------------------------------
     log.info(
-        "Starting AATS controller paper runner — "
-        "DRY_RUN_ENABLED=true, SimulationVenue, SYNTHETIC events, "
-        "control_plane=http://0.0.0.0:%d",
+        "Starting AATS controller — DRY_RUN_ENABLED=true, SimulationVenue, "
+        "feed_source=%s, control_plane=http://0.0.0.0:%d",
+        feed_source,
         CONTROL_PLANE_PORT,
+    )
+    if feed_source == "pumpportal":
+        log.info(
+            "Feed selector: PUMPPORTAL — real mainnet launches in SHADOW/PAPER mode. "
+            "Dashboard will show frames with synthetic=False + provenance=live_shadow."
+        )
+    else:
+        log.info(
+            "Feed selector: SYNTHETIC (default) — "
+            "PAPER-ONLY, NO real edge data. All frames carry synthetic=True."
+        )
+
+    _event_feed_task = (
+        asyncio.create_task(pumpportal_feed_task(), name="pumpportal_feed")
+        if feed_source == "pumpportal"
+        else asyncio.create_task(launch_generator_task(), name="launch_gen")
     )
 
     tasks = [
         asyncio.create_task(fast_loop_task(), name="fast_loop"),
-        asyncio.create_task(launch_generator_task(), name="launch_gen"),
+        _event_feed_task,
         asyncio.create_task(state_publisher_task(), name="state_pub"),
         asyncio.create_task(control_plane_task(), name="control_plane"),
     ]

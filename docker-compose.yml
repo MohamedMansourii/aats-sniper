@@ -161,6 +161,14 @@ services:
 
   # ── aats-slow — Python SLOW loop ──────────────────────────────────────────
   # Feature assembly, model inference, MCS sentiment, LLM veto. NOT the hot path.
+  # Also runs python -m aats.controller (triple-loop + control plane).
+  #
+  # Feed selector (T-LIVE-FEED):
+  #   AATS_FEED_SOURCE=synthetic (DEFAULT) — built-in synthetic generator, no network.
+  #   AATS_FEED_SOURCE=pumpportal — real pump.fun launches in SHADOW/PAPER mode.
+  #     Requires RPC_PRIMARY (for on-chain block_time enrichment, T-300a).
+  #     Optionally PUMPPORTAL_WS_URL (defaults to wss://pumpportal.fun/api/data).
+  #     Dashboard distinguishes real frames via synthetic=False+provenance=live_shadow.
   aats-slow:
     build:
       context: .
@@ -172,6 +180,15 @@ services:
       SOCIAL_API_KEY: "${SOCIAL_API_KEY:-}"
       METRICS_PORT: "9101"
       T_DMS_SECONDS: "${T_DMS_SECONDS:-60}"
+      # ── T-LIVE-FEED: feed source selector ──────────────────────────────
+      # "synthetic" (DEFAULT) or "pumpportal". See .env.example for details.
+      AATS_FEED_SOURCE: "${AATS_FEED_SOURCE:-synthetic}"
+      # Required for pumpportal mode (block_time enrichment via getTransaction).
+      # NEVER logged — may contain an API key in the URL.
+      RPC_PRIMARY: "${RPC_PRIMARY:-}"
+      # Optional override for PumpPortal WS URL (default: wss://pumpportal.fun/api/data).
+      # NEVER logged — may contain an API key as a query param.
+      PUMPPORTAL_WS_URL: "${PUMPPORTAL_WS_URL:-}"
     expose:
       - "9101"
     networks:
