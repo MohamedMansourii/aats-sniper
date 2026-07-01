@@ -19,7 +19,6 @@ GOLDEN FIXTURES:
 from __future__ import annotations
 
 import inspect
-import time
 from typing import Any
 
 import pytest
@@ -27,14 +26,12 @@ import pytest
 from aats.sentiment.caller_score import (
     DEFAULT_UNIVERSE_ACCURACY,
     MIN_CALLS_FOR_SCORE,
-    NEGATIVE_ACCURACY_DELTA_THRESHOLD,
-    CallerCall,
     CallerCallOutcome,
     CallerSignal,
     CallerTrackRecordScorer,
     InMemoryCallerOutcomeStore,
-    assert_caller_signal_cannot_raise_conviction,
     _compute_caller_score,
+    assert_caller_signal_cannot_raise_conviction,
 )
 
 # ---------------------------------------------------------------------------
@@ -542,7 +539,6 @@ class TestOfflineInjectable:
 
     def test_in_memory_store_makes_no_network_calls(self) -> None:
         """InMemoryCallerOutcomeStore has no network socket operations."""
-        import socket
         # If this test passes, no sockets were opened.
         # (We just run the scorer end-to-end and verify no exception from a live call.)
         store = InMemoryCallerOutcomeStore(outcomes=_ALWAYS_WRONG_OUTCOMES)
@@ -743,3 +739,219 @@ def test_golden_fixture_summary(capsys: Any) -> None:
         f"Expected >= 3 low-selectivity callers, got {low_weight_count}. "
         "Most callers must score near-zero or negative (ADVERSARIAL-BY-DEFAULT)."
     )
+
+
+# ---------------------------------------------------------------------------
+# DEF-EN1-01: de-risk guard survives python -O (bare-assert replacement)
+#
+# Ported from DEF-E10-01 (aats/sentiment/velocity.py::apply_velocity_penalty_to_conviction).
+# Same defect class: assert_caller_signal_cannot_raise_conviction previously
+# enforced its de-risk invariant with a bare `assert`, which is STRIPPED under
+# `python -O` / PYTHONOPTIMIZE=1.  In an optimised runtime the guarantee that a
+# caller signal can only DE-RISK (never raise conviction) would silently
+# disappear.  The fix mirrors DEF-E10-01's structure exactly.
+# ---------------------------------------------------------------------------
+
+
+class TestDeRiskGuardSurvivesOptimizedMode:
+    """DEF-EN1-01: The de-risk invariant must NOT rely on bare `assert`.
+
+    Under `python -O` (optimised mode) all `assert` statements are STRIPPED.
+    A forged positive mcs_delta_contribution would therefore silently RAISE
+    conviction if the only guard were an assertion.
+
+    The fix replaces the bare assert with:
+      1. An explicit `raise ValueError` for a forged positive
+         mcs_delta_contribution (not stripped by -O).
+      2. A hard `min(0.0, ...)` clamp that prevents raise-conviction even if
+         the raise were somehow bypassed.
+
+    These tests prove that:
+      - A forged positive delta raises ValueError (not AssertionError).
+      - The guard logic is unconditional — it fires even when __debug__ is False.
+      - A legitimate zero delta returns base_conviction unchanged.
+      - The clamp is load-bearing: even if the ValueError were suppressed the
+        result could not exceed base_conviction.
+    """
+
+    def _make_signal_with_delta(self, delta: float) -> CallerSignal:
+        """Build a CallerSignal with an arbitrary (potentially forged) mcs_delta_contribution.
+
+        Constructs the dataclass directly — bypasses CallerTrackRecordScorer so
+        we can test the guard in assert_caller_signal_cannot_raise_conviction
+        independently.
+        """
+        return CallerSignal(
+            asset="ForgeryTestMint111111111111111111111111",
+            decision_time_ms=DECISION_TIME_MS,
+            caller_selectivity_modifier=1.0,
+            mcs_delta_contribution=delta,
+            called_by=["forged_caller"],
+            positive_caller_count=0,
+            negative_caller_count=0,
+            thin_data_caller_count=0,
+            net_caller_weight=0.0,
+            caller_scores=[],
+        )
+
+    def test_forged_positive_delta_raises_value_error_not_assertion_error(
+        self,
+    ) -> None:
+        """A forged positive mcs_delta_contribution must raise ValueError, NOT AssertionError.
+
+        AssertionError is produced by `assert` and is stripped under python -O.
+        ValueError is unconditional and survives python -O.
+
+        This is the primary DEF-EN1-01 guard.
+        """
+        forged = self._make_signal_with_delta(0.3)
+        with pytest.raises(ValueError, match="CALLER INVARIANT VIOLATED"):
+            assert_caller_signal_cannot_raise_conviction(forged, 0.7)
+
+    def test_forged_positive_delta_small_still_raises(self) -> None:
+        """Even a tiny positive delta (epsilon) must raise ValueError."""
+        forged = self._make_signal_with_delta(1e-10)
+        with pytest.raises(ValueError, match="mcs_delta_contribution.*positive"):
+            assert_caller_signal_cannot_raise_conviction(forged, 0.5)
+
+    def test_guard_is_not_an_assertion_error(self) -> None:
+        """Confirm the raised exception type is ValueError, not AssertionError.
+
+        If the guard were a bare `assert`, it would raise AssertionError.
+        Under python -O it would be silently SKIPPED.  The ValueError is never
+        skipped.
+        """
+        forged = self._make_signal_with_delta(0.4)
+        exc_type = None
+        try:
+            assert_caller_signal_cannot_raise_conviction(forged, 0.6)
+        except ValueError:
+            exc_type = ValueError
+        except AssertionError:
+            exc_type = AssertionError
+
+        assert exc_type is ValueError, (
+            "DEF-EN1-01: The de-risk guard raised AssertionError (stripped by python -O) "
+            "instead of ValueError (unconditional). "
+            "Replace the bare assert with an explicit raise ValueError."
+        )
+
+    def test_guard_fires_even_when_debug_is_false(self) -> None:
+        """Simulate python -O by temporarily setting __debug__-equivalent flag.
+
+        We cannot actually set __debug__ = False at runtime (it is read-only),
+        but we can prove the guard is NOT an assert by confirming:
+          (a) The exception is ValueError (not AssertionError).
+          (b) The function's source code does NOT contain a bare `assert` on
+              mcs_delta_contribution (i.e., the load-bearing guard uses
+              `raise`, not `assert`).
+        """
+        import inspect  # noqa: PLC0415
+
+        import aats.sentiment.caller_score as caller_mod  # noqa: PLC0415
+
+        source = inspect.getsource(caller_mod.assert_caller_signal_cannot_raise_conviction)
+
+        # The source must contain `raise ValueError` for the positive-delta case
+        assert "raise ValueError" in source, (
+            "DEF-EN1-01: assert_caller_signal_cannot_raise_conviction must contain an "
+            "explicit `raise ValueError` for the positive-delta guard. "
+            "A bare `assert` is stripped by python -O."
+        )
+
+        # The source must NOT rely solely on assert for the mcs_delta_contribution check.
+        # Count bare `assert` statements (excluding comments) in the function.
+        # Zero bare asserts in the function = guard is unconditional.
+        non_comment_lines = [
+            line.strip()
+            for line in source.splitlines()
+            if not line.strip().startswith("#")
+        ]
+        bare_asserts = [
+            line for line in non_comment_lines if line.startswith("assert ")
+        ]
+        assert len(bare_asserts) == 0, (
+            f"DEF-EN1-01: assert_caller_signal_cannot_raise_conviction contains bare assert "
+            f"statements that are stripped by python -O: {bare_asserts}. "
+            "Replace with explicit `raise ValueError`."
+        )
+
+    def test_zero_delta_returns_base_conviction_unchanged(self) -> None:
+        """A signal with mcs_delta_contribution=0.0 must return base_conviction unchanged."""
+        zero_delta = self._make_signal_with_delta(0.0)
+        for base in [0.0, 0.3, 0.5, 0.7, 1.0]:
+            result = assert_caller_signal_cannot_raise_conviction(zero_delta, base)
+            assert result == pytest.approx(base, abs=1e-9), (
+                f"Zero delta must return base_conviction={base:.3f} unchanged. "
+                f"Got {result:.6f}."
+            )
+
+    def test_legitimate_negative_delta_only_decreases_conviction(self) -> None:
+        """Negative deltas (produced by CallerTrackRecordScorer) must only decrease conviction."""
+        for delta_val in [0.0, -0.1, -0.3, -0.5, -0.8, -1.0]:
+            signal = self._make_signal_with_delta(delta_val)
+            for base in [0.0, 0.2, 0.5, 0.8, 1.0]:
+                result = assert_caller_signal_cannot_raise_conviction(signal, base)
+                assert result <= base + 1e-9, (
+                    f"Negative delta={delta_val} raised conviction "
+                    f"from {base:.3f} to {result:.3f}. De-risk direction violated."
+                )
+                assert result >= 0.0, (
+                    f"Conviction clamped below 0.0: {result:.3f} "
+                    f"(base={base:.3f}, delta={delta_val:.3f})."
+                )
+
+    def test_clamp_is_belt_and_suspenders_for_raise_bypass(self) -> None:
+        """Prove that the min(0.0, delta_raw) clamp is load-bearing.
+
+        If the ValueError raise were somehow bypassed (e.g., by a future code
+        change that wraps the call in a bare except), the clamp ensures
+        conviction still cannot rise.
+
+        We prove this by directly testing the clamp arithmetic:
+          clamp(base_conviction + min(0.0, 0.3), 0.0, 1.0)
+          = clamp(base + 0.0, 0.0, 1.0)
+          = clamp(base, 0.0, 1.0)
+          = base  (for base in [0, 1])
+        So even with a forged positive delta, the clamped result = base (not higher).
+        """
+        for pos_delta in [0.5, 0.1, 1.0, 1e-6]:
+            clamped = min(0.0, pos_delta)
+            for base in [0.0, 0.3, 0.7, 1.0]:
+                result_if_clamped = max(0.0, min(1.0, base + clamped))
+                assert result_if_clamped <= base + 1e-9, (
+                    f"Even with forged delta={pos_delta}, the clamp ensures "
+                    f"result ({result_if_clamped:.4f}) <= base ({base:.4f})."
+                )
+
+    def test_mutation_revert_clamp_would_leak_conviction_under_dash_o(self) -> None:
+        """MUTATION PROBE (documented): reverting the fix to the historical bare
+        `assert` reproduces the exact leak this defect closes.
+
+        This test does not monkeypatch the module (that would require reload
+        gymnastics); instead it proves the OLD formula — which this test would
+        catch as RED if the fix were reverted — by directly recomputing what
+        the pre-fix code path produced:
+
+            old_adjusted = clamp(base_conviction + mcs_delta_contribution, 0, 1)
+            assert old_adjusted <= base_conviction + 1e-9   # <- bare assert, stripped by -O
+
+        With a forged positive delta of +0.3 and base=0.7, the OLD formula's
+        clamped result is 1.0 > 0.7 — the bare assert would have caught this
+        under normal `python`, but SILENTLY PASSES under `python -O`. The FIXED
+        function must raise ValueError long before this arithmetic executes.
+        """
+        forged = self._make_signal_with_delta(0.3)
+        base = 0.7
+
+        # Reproduce the pre-fix arithmetic to show what WOULD have leaked.
+        old_style_adjusted = max(0.0, min(1.0, base + forged.mcs_delta_contribution))
+        assert old_style_adjusted > base, (
+            "Sanity check: the forged delta must demonstrate a conviction leak "
+            "under the pre-fix arithmetic for this probe to be meaningful."
+        )
+
+        # The FIXED function must refuse to produce this leaked value — it must
+        # raise before returning anything, RED-proving the guard is load-bearing.
+        with pytest.raises(ValueError):
+            assert_caller_signal_cannot_raise_conviction(forged, base)

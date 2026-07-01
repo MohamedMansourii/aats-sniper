@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Protocol
 
 logger = logging.getLogger(__name__)
@@ -649,14 +649,49 @@ def assert_caller_signal_cannot_raise_conviction(
 
     Returns:
         Adjusted conviction in [0.0, base_conviction].
+
+    DEF-EN1-01 (ported from DEF-E10-01 / aats/sentiment/velocity.py):
+    Hard clamp: mcs_delta_contribution is guaranteed non-positive by
+    CallerTrackRecordScorer.score_for_asset(), but a forged / mutated
+    CallerSignal (e.g. from a unit-test adversary or a future code path that
+    bypasses score_for_asset()) could carry a positive delta.  A bare
+    `assert` is STRIPPED under `python -O` / PYTHONOPTIMIZE=1, so we enforce
+    the invariant with an explicit raise that survives optimised mode AND a
+    clamp that prevents any accidental raise-conviction path even if the
+    raise were somehow suppressed.
+
+    ORDER OF OPERATIONS (load-bearing):
+      1. Clamp delta to (-inf, 0.0] — de-risk direction enforced unconditionally.
+      2. Raise ValueError for the forged-positive case — not an assert.
+      3. Compute adjusted score.
+      4. Raise ValueError if adjusted > base_conviction — not an assert.
+
+    The clamp in step 1 means step 3 is always safe even if the raise in
+    step 2 is somehow bypassed (belt-and-suspenders).
     """
-    delta = signal.mcs_delta_contribution  # <= 0.0 always
+    delta_raw = signal.mcs_delta_contribution
+    if delta_raw > 0.0:
+        # This is NOT an assert — it is NOT stripped by python -O.
+        raise ValueError(
+            f"CALLER INVARIANT VIOLATED: signal.mcs_delta_contribution={delta_raw:.6f} "
+            "is positive. CallerSignal.mcs_delta_contribution MUST be <= 0.0. "
+            "A positive delta would raise conviction, violating the de-risk direction rule. "
+            "This is a defect in the caller or the CallerTrackRecordScorer pipeline."
+        )
+    # Clamp defensively even after the raise (belt-and-suspenders: if this
+    # function is ever called in a context where exceptions are swallowed, the
+    # clamp ensures conviction can still only go down, never up).
+    delta = min(0.0, delta_raw)
     adjusted = max(0.0, min(1.0, base_conviction + delta))
-    # Invariant: adjusted cannot exceed base_conviction
-    # (since delta <= 0.0, base_conviction + delta <= base_conviction)
-    assert adjusted <= base_conviction + 1e-9, (
-        f"INVARIANT VIOLATED: caller signal raised conviction "
-        f"from {base_conviction:.4f} to {adjusted:.4f}. "
-        "Caller signals may ONLY de-risk (lower or maintain conviction)."
-    )
+    # Hard guard: result must not exceed base_conviction.
+    # This is NOT an assert — it is NOT stripped by python -O.
+    if adjusted > base_conviction + 1e-9:
+        raise ValueError(
+            f"CALLER INVARIANT VIOLATED: adjusted conviction {adjusted:.6f} "
+            f"exceeds base_conviction {base_conviction:.6f} "
+            f"(signal.mcs_delta_contribution={signal.mcs_delta_contribution:.6f}, "
+            f"clamped_delta={delta:.6f}). "
+            "Caller signals may ONLY de-risk (lower or maintain conviction). "
+            "This is a critical safety defect — investigation required."
+        )
     return adjusted
