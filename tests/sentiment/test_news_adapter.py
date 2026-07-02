@@ -320,7 +320,7 @@ async def test_pipeline_news_lowers_conviction():
         preloaded_posts=ORGANIC_POSTS,
         mock_llm_base_score=0.6,
     )
-    mcs_no_news, _, news_sig_empty = await pipe_no_news.score(
+    mcs_no_news, _, news_sig_empty, _vel_empty = await pipe_no_news.score(
         _ASSET, _KEYWORDS, DECISION_TIME_MS
     )
 
@@ -330,7 +330,7 @@ async def test_pipeline_news_lowers_conviction():
         mock_llm_base_score=0.6,
         preloaded_news=CREDIBLE_NEGATIVE_ARTICLES,
     )
-    mcs_with_news, _, news_sig_full = await pipe_with_news.score(
+    mcs_with_news, _, news_sig_full, _vel_full = await pipe_with_news.score(
         _ASSET, _KEYWORDS, DECISION_TIME_MS
     )
 
@@ -357,7 +357,7 @@ async def test_pipeline_positive_news_does_not_raise_conviction():
         preloaded_posts=ORGANIC_POSTS,
         mock_llm_base_score=0.6,
     )
-    mcs_no_news, _, _ = await pipe_no_news.score(_ASSET, _KEYWORDS, DECISION_TIME_MS)
+    mcs_no_news, _, _, _vel = await pipe_no_news.score(_ASSET, _KEYWORDS, DECISION_TIME_MS)
 
     # Pipeline with positive news (Forbes/Bloomberg positive coverage)
     pipe_with_pos_news = MCSSentimentPipeline.offline(
@@ -365,7 +365,7 @@ async def test_pipeline_positive_news_does_not_raise_conviction():
         mock_llm_base_score=0.6,
         preloaded_news=POSITIVE_ARTICLES,
     )
-    mcs_with_pos_news, _, news_sig = await pipe_with_pos_news.score(
+    mcs_with_pos_news, _, news_sig, _vel_pos = await pipe_with_pos_news.score(
         _ASSET, _KEYWORDS, DECISION_TIME_MS
     )
 
@@ -393,7 +393,7 @@ async def test_pipeline_future_news_excluded_conviction_unchanged():
         preloaded_posts=ORGANIC_POSTS,
         mock_llm_base_score=0.6,
     )
-    mcs_no_news, _, _ = await pipe_no_news.score(_ASSET, _KEYWORDS, DECISION_TIME_MS)
+    mcs_no_news, _, _, _vel = await pipe_no_news.score(_ASSET, _KEYWORDS, DECISION_TIME_MS)
 
     # With ONLY future news articles (all must be excluded)
     pipe_future_only = MCSSentimentPipeline.offline(
@@ -401,7 +401,7 @@ async def test_pipeline_future_news_excluded_conviction_unchanged():
         mock_llm_base_score=0.6,
         preloaded_news=FUTURE_NEWS_ARTICLES,
     )
-    mcs_future, _, news_sig = await pipe_future_only.score(
+    mcs_future, _, news_sig, _vel_future = await pipe_future_only.score(
         _ASSET, _KEYWORDS, DECISION_TIME_MS
     )
 
@@ -420,7 +420,7 @@ async def test_pipeline_future_news_excluded_conviction_unchanged():
 
 @pytest.mark.asyncio
 async def test_pipeline_returns_news_signal():
-    """Pipeline.score() returns a 3-tuple (MCSScore, MCSEvidence, NewsSignal)."""
+    """Pipeline.score() returns a 4-tuple (MCSScore, MCSEvidence, NewsSignal, VelocitySignal)."""
     pipe = MCSSentimentPipeline.offline(
         preloaded_posts=ORGANIC_POSTS,
         mock_llm_base_score=0.6,
@@ -428,11 +428,13 @@ async def test_pipeline_returns_news_signal():
     )
     result = await pipe.score(_ASSET, _KEYWORDS, DECISION_TIME_MS)
 
-    assert len(result) == 3, f"pipeline.score() must return 3-tuple, got {len(result)}"
-    mcs_score, evidence, news_signal = result
+    assert len(result) == 4, f"pipeline.score() must return 4-tuple, got {len(result)}"
+    mcs_score, evidence, news_signal, velocity_signal = result
     assert hasattr(news_signal, "credible_negative_event")
     assert hasattr(news_signal, "mcs_delta")
     assert hasattr(news_signal, "headline_digest")
+    assert hasattr(velocity_signal, "mcs_penalty")
+    assert hasattr(velocity_signal, "account_age_cohort_flag")
 
 
 @pytest.mark.asyncio
@@ -444,7 +446,7 @@ async def test_pipeline_no_news_adapters_backward_compatible():
     tier_b = TierBScorer(MockLLMBackend(base_score=0.6))
     pipe = MCSSentimentPipeline(adapters=[adapter], tier_b=tier_b)  # no news_adapters
 
-    mcs, evidence, news_sig = await pipe.score(_ASSET, _KEYWORDS, DECISION_TIME_MS)
+    mcs, evidence, news_sig, _vel = await pipe.score(_ASSET, _KEYWORDS, DECISION_TIME_MS)
 
     assert news_sig.mcs_delta == 0.0, (
         "No news adapters must produce mcs_delta=0.0 (backward compat)."
@@ -460,7 +462,7 @@ async def test_pipeline_news_red_flags_merged_into_mcs():
         mock_llm_base_score=0.6,
         preloaded_news=CREDIBLE_NEGATIVE_ARTICLES,
     )
-    mcs, _, news_sig = await pipe.score(_ASSET, _KEYWORDS, DECISION_TIME_MS)
+    mcs, _, news_sig, _vel = await pipe.score(_ASSET, _KEYWORDS, DECISION_TIME_MS)
 
     for flag in news_sig.red_flags:
         assert flag in mcs.red_flags, (

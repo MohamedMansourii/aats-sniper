@@ -124,8 +124,8 @@ async def test_pipeline_score_unchanged_when_future_posts_added():
     pipe_leak = MCSSentimentPipeline.offline(preloaded_posts=ORGANIC_PLUS_FUTURE)
 
     keywords = ["solana", "launch", "gem"]
-    mcs_clean, _, _news_clean = await pipe_clean.score(_ASSET, keywords, DECISION_TIME_MS)
-    mcs_leak, ev_leak, _news_leak = await pipe_leak.score(_ASSET, keywords, DECISION_TIME_MS)
+    mcs_clean, _, _news_clean, _vel_clean = await pipe_clean.score(_ASSET, keywords, DECISION_TIME_MS)
+    mcs_leak, ev_leak, _news_leak, _vel_leak = await pipe_leak.score(_ASSET, keywords, DECISION_TIME_MS)
 
     assert mcs_clean.conviction == mcs_leak.conviction, (
         f"LOOKAHEAD LEAK DETECTED: conviction without future posts="
@@ -158,12 +158,16 @@ async def test_earlier_decision_time_produces_different_score():
 
     # Score at DECISION_TIME_MS (late_post is included)
     pipe_full = MCSSentimentPipeline.offline(preloaded_posts=all_posts)
-    mcs_full, _, _news_full = await pipe_full.score(_ASSET, ["solana", "launch"], DECISION_TIME_MS)
+    mcs_full, _, _news_full, _vel_full = await pipe_full.score(
+        _ASSET, ["solana", "launch"], DECISION_TIME_MS
+    )
 
     # Score at T_MINUS_10MIN - 1 (late_post is excluded)
     early_decision = T_MINUS_10MIN - 1
     pipe_early = MCSSentimentPipeline.offline(preloaded_posts=all_posts)
-    mcs_early, _, _news_early = await pipe_early.score(_ASSET, ["solana", "launch"], early_decision)
+    mcs_early, _, _news_early, _vel_early = await pipe_early.score(
+        _ASSET, ["solana", "launch"], early_decision
+    )
 
     # The post counts must differ (proving the time anchor is load-bearing)
     # Even if the convictions happen to be similar, the post counts differ

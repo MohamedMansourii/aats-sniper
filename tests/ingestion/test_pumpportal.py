@@ -31,6 +31,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from aats.contracts.events import LaunchSource
 from aats.ingestion.decoders import EventKind
 from aats.ingestion.transport import (
@@ -712,6 +714,67 @@ class TestStats:
                 await gen.aclose()
 
         assert transport.stats.last_slot == _ENRICH_SLOT
+
+
+# ---------------------------------------------------------------------------
+# Secrets never logged — B1 regression (_get_slot_time HTTP-status error path)
+# ---------------------------------------------------------------------------
+
+class TestSecretsNeverLoggedOnRpcError:
+    """An HTTP-status error (401/403/429 from an expired/rate-limited key)
+    must never leak the api-key embedded in rpc_url's query string into logs.
+    httpx.HTTPStatusError's str()/repr() embeds the full request URL, so
+    ``_get_slot_time`` must log only the exception type / status code —
+    never the exception object or the URL itself.
+    """
+
+    async def test_get_slot_time_never_logs_api_key_on_http_status_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        import httpx
+
+        secret = "SUPER_SECRET_RPC_KEY"  # pragma: allowlist secret
+        secret_url = f"https://mainnet.helius-rpc.com/?api-key={secret}"
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            # Simulate an expired/rate-limited key: 401 Unauthorized.
+            return httpx.Response(401, request=request, json={"error": "unauthorized"})
+
+        mock_transport = httpx.MockTransport(_handler)
+        real_async_client = httpx.AsyncClient
+
+        def _patched_async_client(*args, **kwargs):
+            kwargs["transport"] = mock_transport
+            return real_async_client(*args, **kwargs)
+
+        transport = PumpPortalTransport(
+            ws_url="wss://fake-pumpportal.example/api/data",
+            rpc_url=secret_url,
+            pump_program_id=_PUMP_PID,
+            enrich_via_rpc=True,
+            max_reconnect_attempts=1,
+        )
+
+        with (
+            caplog.at_level(logging.DEBUG),
+            patch("httpx.AsyncClient", _patched_async_client),
+        ):
+            slot, block_time_ms = await transport._get_slot_time(_SIG_1)
+
+        assert (slot, block_time_ms) == (None, None), (
+            "HTTP-status error must resolve to (None, None), never raise."
+        )
+        assert secret not in caplog.text, (
+            "The api-key MUST NEVER appear in logs on the HTTP-error path."
+        )
+        assert "api-key" not in caplog.text, (
+            "The RPC URL's query string MUST NEVER appear in logs on the "
+            "HTTP-error path."
+        )
+        # The status code IS useful for operators and safe to log.
+        assert "401" in caplog.text
 
 
 # ---------------------------------------------------------------------------

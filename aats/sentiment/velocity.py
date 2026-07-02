@@ -53,6 +53,9 @@ import logging
 from dataclasses import dataclass
 from typing import Protocol
 
+from aats.sentiment.models import RawPost
+from aats.sentiment.tier_a import BOT_SCORE_THRESHOLD, _bot_score
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -100,8 +103,12 @@ HOLDER_GROWTH_COHORT_THRESHOLD: float = 0.50
 class VelocityEvent:
     """A single observed social event (post / reaction / join) for velocity tracking.
 
-    UNTRUSTED DATA: `text_hash` is a hash of the original post text — never the
-    raw text.  This module does NOT receive raw social text; it receives metadata.
+    NO TEXT: this record carries no post text and no hash of post text — only
+    metadata (IDs, timestamps, account age, the pre-computed bot flag).  This
+    module never receives, stores, or reasons over raw social text; velocity
+    is computed purely from structured fields the source has already derived
+    (e.g. `SocialAdapterVelocitySource` reshapes `RawPost` metadata, never
+    `RawPost.text`).
 
     event_time_ms:      Platform-stamped publish time (authoritative).
                         This is the anchor for point-in-time filtering.
@@ -207,6 +214,103 @@ class InMemoryVelocitySource:
         """
         cutoff_low = as_of_ms - window_ms
         return [e for e in self._events if e.event_time_ms >= cutoff_low]
+
+
+# ---------------------------------------------------------------------------
+# SocialAdapterVelocitySource (production backend — EN5)
+# ---------------------------------------------------------------------------
+
+
+class SocialAdapterVelocitySource:
+    """Production VelocitySource backend — derives VelocityEvents from the
+    RawPosts the social adapters (aats/sentiment/adapters.py) ALREADY fetched
+    for this asset+window in an earlier ingestion stage (EN5).
+
+    ZERO ADDITIONAL NETWORK CALLS: this class never calls a SocialAdapter (or
+    any other I/O) itself.  It has no `fetch_posts` method and no adapter/
+    credential/token constructor parameter — it only reshapes RawPost objects
+    a SocialAdapter already retrieved (e.g. MCSSentimentPipeline's Stage 1
+    fetch) into VelocityEvents, via `posts=` at construction or `load_posts()`.
+    `MCSSentimentPipeline.score()` (EN2a's Stage 6) constructs this class
+    directly over the SAME RawPosts its Stage 1 already fetched — there is a
+    single, first-class, standalone, injectable VelocitySource implementation
+    of the RawPost -> VelocityEvent mapping (this class), not a second inline
+    copy in the pipeline, so the E10 signal can also be computed WITHOUT
+    running the full MCS pipeline and WITHOUT any extra fetch or cost.
+
+    `is_bot_scored` REUSES the Tier-A bot scorer (`aats.sentiment.tier_a._bot_score`
+    gated by `BOT_SCORE_THRESHOLD`) — a single source of truth for "is this
+    account bot-like", matching the VelocityEvent docstring contract exactly
+    ("True iff the Tier-A bot scorer rated this account as likely automated").
+
+    INJECTABLE: construct with `posts` (RawPosts already fetched for one
+    asset+window) or call `load_posts()` to refresh them between calls (e.g.
+    a caller re-points this source once per decision cycle, after its own
+    social adapters run — no re-fetch happens inside this class either way).
+
+    WINDOWING CONTRACT (mirrors InMemoryVelocitySource exactly):
+      `get_events()` enforces only the LOWER bound
+      (event_time_ms >= as_of_ms - window_ms).  The UPPER bound
+      (event_time_ms <= as_of_ms) is intentionally left to
+      VelocitySignalComputer.compute(), which applies the definitive
+      point-in-time filter and counts future-excluded events for the audit
+      trail (posts_excluded_future) — the SAME contract every VelocitySource
+      implementation in this module honors.
+
+    USAGE:
+        source = SocialAdapterVelocitySource(posts=already_fetched_raw_posts)
+        computer = VelocitySignalComputer(source=source)
+        signal = computer.compute(asset, decision_time_ms)
+        # signal.mcs_penalty >= 0.0 always (de-risk only)
+    """
+
+    def __init__(self, posts: list[RawPost] | None = None) -> None:
+        self._posts: list[RawPost] = list(posts or [])
+
+    def load_posts(self, posts: list[RawPost]) -> None:
+        """Replace the underlying RawPost set with a freshly-fetched batch.
+
+        NO NETWORK CALL happens here — `posts` must already have been
+        retrieved by a SocialAdapter elsewhere; this method only re-points
+        the in-memory list this source reshapes into VelocityEvents.
+        """
+        self._posts = list(posts)
+
+    @property
+    def post_count(self) -> int:
+        """Number of RawPosts currently loaded (audit/debugging helper)."""
+        return len(self._posts)
+
+    def get_events(
+        self,
+        asset: str,  # noqa: ARG002 — RawPost carries no per-asset partition;
+        # the caller is responsible for only loading posts relevant to this
+        # asset (identical contract to InMemoryVelocitySource).
+        as_of_ms: int,
+        window_ms: int,
+    ) -> list[VelocityEvent]:
+        """Map the already-ingested RawPosts to VelocityEvents (lower-bound only).
+
+        NO NETWORK CALLS, NO LLM CALLS: every VelocityEvent field is derived
+        purely from RawPost attributes a SocialAdapter already populated.  The
+        upper bound (event_time_ms <= as_of_ms) is intentionally NOT enforced
+        here; VelocitySignalComputer.compute() applies the definitive
+        point-in-time filter (same contract as InMemoryVelocitySource.get_events()).
+        """
+        cutoff_low = as_of_ms - window_ms
+        return [
+            VelocityEvent(
+                event_id=post.post_id,
+                account_id=post.author_id,
+                source=post.source,
+                event_time_ms=post.event_time_ms,
+                fetch_time_ms=post.fetch_time_ms,
+                account_age_days=max(0.0, post.account_age_days),
+                is_bot_scored=_bot_score(post) > BOT_SCORE_THRESHOLD,
+            )
+            for post in self._posts
+            if post.event_time_ms >= cutoff_low
+        ]
 
 
 # ---------------------------------------------------------------------------

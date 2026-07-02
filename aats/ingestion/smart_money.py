@@ -1,4 +1,14 @@
-"""Smart-money / copy-trade wallet stream (T-302).
+"""Smart-money / copy-trade wallet stream (T-302, E-M1-04).
+
+E-M1-04 (Wave 1 "go-smart" alpha engine): wires a LIVE SmartWalletBackend
+(`GeyserSmartWalletBackend`, backed by a Yellowstone `accounts` subscription
+built by `_build_account_subscribe_request()`) behind the SAME
+`SmartWalletBackend` Protocol `ReplaySmartWalletBackend` already satisfied.
+`SmartWalletStream` is UNCHANGED -- every safety property below is enforced
+there exactly as it was for T-302; the live backend only supplies
+RawWalletUpdate records, identically to the replay fixture.  The stream stays
+DISABLED unless an operator explicitly sets `SmartWalletConfig.enabled=True`
+AND wires a backend -- neither of which this change does automatically.
 
 OPERATIONAL CONTRACT (BUILD-DIRECTIVE-v3, AUTONOMY-DIRECTIVE OQ-002, EH-005):
   - DISABLED BY DEFAULT.  The stream is a no-op unless
@@ -21,7 +31,11 @@ OPERATIONAL CONTRACT (BUILD-DIRECTIVE-v3, AUTONOMY-DIRECTIVE OQ-002, EH-005):
     FeatureFrame.smart_wallet_entry_lag_slots (data-models.md §3).
   - INJECTABLE AND OFFLINE-MOCKABLE.  The stream backend is passed at
     construction.  `ReplaySmartWalletBackend` is the deterministic offline
-    fixture source.  No real RPC is called in tests.
+    fixture source.  `GeyserSmartWalletBackend` is the LIVE production
+    implementation (E-M1-04); it is itself built on an injectable
+    `AccountSubscriptionSource` (`MockAccountSubscriptionSource` in tests,
+    `GeyserAccountSubscriptionSource` live).  No real RPC/gRPC/WS connection
+    is ever opened in tests.
   - EXPERIMENTAL / EXPECTED-ZERO (EH-005).  The lift of smart_wallets_in is
     expected to be ~0 given we are always behind their fill slot.  The feature
     is included to measure that expected-zero honestly, not to trade on a
@@ -52,11 +66,41 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Universal SPL system-program constants (NOT venue IDs — no ProgramRegistry
+# governance needed; same convention as the hardcoded VOTE_PROGRAM literal in
+# transport.py).  These are canonical, public Solana program IDs, unchanged
+# since program inception.
+# ---------------------------------------------------------------------------
+
+TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+
+# spl_token::state::Account (solana-program-library/token/program/src/state.rs)
+# is a STABLE, public binary layout (unchanged since the Token program shipped):
+#   offset  0..32  mint    (pubkey)
+#   offset 32..64  owner   (pubkey)
+#   offset 64..72  amount  (u64, little-endian)
+#   ... (delegate / state / is_native / delegated_amount / close_authority)
+# Token-2022 accounts share this identical base layout; extensions are
+# appended after byte 165 and are irrelevant to balance-delta decoding here.
+# This is a universal system-level constant, not a per-tx instruction offset
+# guessed from an unconfirmed signature (the M1 "confirm on a real signature"
+# guard governs venue-specific instruction decoding, not this public,
+# ecosystem-wide account-state layout used by every wallet/explorer/RPC).
+SPL_TOKEN_ACCOUNT_MIN_LEN = 72  # enough bytes for mint + owner + amount
+
+
+# BlockTimeResolver: an injectable async callable that resolves the on-chain
+# block_time (ms) for a given slot -- e.g. a getBlockTime RPC call.  Returns
+# None if the block time is not yet available.  NEVER wall-clock (T-300a).
+BlockTimeResolver = Callable[[int], Awaitable["int | None"]]
 
 # ---------------------------------------------------------------------------
 # Stream registry constant (new stream for smart-money events)
@@ -315,6 +359,665 @@ class ReplaySmartWalletBackend:
                 yield update
         finally:
             self._connected = False
+
+
+# ---------------------------------------------------------------------------
+# RawAccountUpdate — transport-agnostic raw account write (pre-decode input)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RawAccountUpdate:
+    """A single raw on-chain account write, transport-agnostic.
+
+    This is the INJECTABLE seam one layer BELOW SmartWalletBackend: an
+    AccountSubscriptionSource (live Geyser gRPC, or MockAccountSubscriptionSource
+    in tests) yields these.  GeyserSmartWalletBackend turns a stream of
+    RawAccountUpdates into RawWalletUpdates (balance deltas) that feed the
+    existing SmartWalletDecoder unchanged.
+
+    Fields:
+      pubkey        — the account address that was written.  Either a tracked
+                      wallet's own (System-Program-owned) account, OR an SPL
+                      token account whose `owner` field (decoded from `data`)
+                      is a tracked wallet.
+      owner_program — the program that owns `pubkey` on-chain (System Program
+                      for a wallet's native account; Token / Token-2022
+                      program for an SPL token account).
+      slot          — on-chain slot of this write (AUTHORITATIVE; T-300a).
+      lamports      — native SOL lamports currently held by `pubkey`.
+      data          — raw account data bytes.  Empty for a plain system
+                      account; >=165 bytes (SPL Token Account layout) for a
+                      token account.
+      write_version — Geyser per-slot write-ordering counter (monitoring only).
+      is_startup    — True for the INITIAL snapshot delivered right after
+                      subscribing (the pre-existing balance — NOT a "fill").
+                      Used only to seed the baseline; never turned into a
+                      SmartMoneyEvent.
+    """
+
+    pubkey: str
+    owner_program: str
+    slot: int
+    lamports: int
+    data: bytes
+    write_version: int
+    is_startup: bool = False
+
+
+# ---------------------------------------------------------------------------
+# AccountSubscriptionSource — the injectable raw transport (Protocol)
+# ---------------------------------------------------------------------------
+
+
+class AccountSubscriptionSource(Protocol):
+    """Protocol for the raw accountSubscribe transport.
+
+    Same injectable pattern as SmartWalletBackend / TransportInterface: the
+    LIVE implementation (GeyserAccountSubscriptionSource) opens a real
+    Yellowstone gRPC channel; MockAccountSubscriptionSource is the
+    deterministic, no-network test double used by every test in this module.
+    """
+
+    def subscribe(
+        self,
+        wallet_addresses: frozenset[str],
+        last_slot: int = 0,
+    ) -> AsyncIterator[RawAccountUpdate]:
+        """Yield RawAccountUpdates for tracked wallets from last_slot onward."""
+        ...  # pragma: no cover
+
+
+# ---------------------------------------------------------------------------
+# MockAccountSubscriptionSource — deterministic offline test double
+# ---------------------------------------------------------------------------
+
+
+class MockAccountSubscriptionSource:
+    """Deterministic, no-network test double for AccountSubscriptionSource.
+
+    NOTE: this is NOT ReplaySmartWalletBackend (which replays already-decoded
+    RawWalletUpdate objects).  MockAccountSubscriptionSource replays RAW,
+    pre-decode account writes -- it exercises GeyserSmartWalletBackend's SPL
+    Token Account decode + balance-delta logic end-to-end, exactly the way
+    the live Geyser accountSubscribe path does.  No real gRPC/WS connection
+    is ever opened by this class; it is for tests only.
+    """
+
+    def __init__(self, updates: list[RawAccountUpdate]) -> None:
+        self._updates = updates
+        self._connected = False
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+    async def subscribe(  # type: ignore[override]
+        self,
+        wallet_addresses: frozenset[str],
+        last_slot: int = 0,
+    ) -> AsyncIterator[RawAccountUpdate]:
+        self._connected = True
+        try:
+            for update in self._updates:
+                if update.slot < last_slot:
+                    continue  # resume-from-slot: skip already-processed slots
+                yield update
+        finally:
+            self._connected = False
+
+
+# ---------------------------------------------------------------------------
+# SPL Token Account decode helper (pure function)
+# ---------------------------------------------------------------------------
+
+
+def _decode_spl_token_account(data: bytes) -> tuple[str, str, int] | None:
+    """Decode (mint, owner, amount) from the canonical SPL Token Account layout.
+
+    See the SPL_TOKEN_ACCOUNT_MIN_LEN module comment for the layout citation.
+    Returns None (never raises) if `data` is too short to hold the base
+    fields -- a live feed can legitimately deliver an unrelated or partial
+    account write; a decode failure must never crash the stream.
+    """
+    if len(data) < SPL_TOKEN_ACCOUNT_MIN_LEN:
+        return None
+    from aats.ingestion.transport import _bytes_to_base58
+
+    mint = _bytes_to_base58(bytes(data[0:32]))
+    owner = _bytes_to_base58(bytes(data[32:64]))
+    amount = int.from_bytes(bytes(data[64:72]), "little")
+    return (mint, owner, amount)
+
+
+# ---------------------------------------------------------------------------
+# _build_account_subscribe_request — pure helper (testable without a live channel)
+# ---------------------------------------------------------------------------
+
+
+def _build_account_subscribe_request(
+    geyser_pb2: object,
+    wallet_addresses: frozenset[str],
+    from_slot: int,
+    commitment: int,
+) -> object:
+    """Build a Yellowstone SubscribeRequest scoped to tracked wallets ONLY.
+
+    Mirrors the pure-helper pattern of `_build_subscribe_request()` in
+    transport.py (finding B2): no I/O, fully unit-testable without a live
+    gRPC channel.
+
+    FILTER SCOPING (never a firehose):
+      - "native": one shared `accounts` filter group with
+        `account = list(wallet_addresses)` -- tracks the wallets' OWN native
+        SOL balance writes.
+      - "tok_<i>" (one group PER wallet): `owner = [TOKEN_PROGRAM_ID,
+        TOKEN_2022_PROGRAM_ID]` AND `filters = [memcmp(offset=32,
+        bytes=wallet_pubkey_bytes)]` -- tracks ONLY SPL token accounts whose
+        `owner` field (byte offset 32 in the SPL Token Account layout) is
+        THIS specific wallet.  A separate group per wallet is required
+        because Yellowstone ANDs all filters within one group; an
+        owner-only filter with no memcmp would match every token account
+        on-chain -- exactly the firehose this module must avoid.
+
+    Args:
+        geyser_pb2: the imported geyser_pb2 module (injectable for tests).
+        wallet_addresses: tracked wallet pubkeys (already capped to <= 20).
+        from_slot: resume slot for reconnects (0 = start from live tip).
+        commitment: CommitmentLevel value (0 = PROCESSED).
+    """
+    from aats.ingestion.transport import _base58_decode
+
+    request = geyser_pb2.SubscribeRequest()
+
+    sorted_wallets = sorted(wallet_addresses)
+
+    if sorted_wallets:
+        native_group = request.accounts["native"]
+        for w in sorted_wallets:
+            native_group.account.append(w)
+
+    for i, wallet in enumerate(sorted_wallets):
+        tok_group = request.accounts[f"tok_{i}"]
+        tok_group.owner.append(TOKEN_PROGRAM_ID)
+        tok_group.owner.append(TOKEN_2022_PROGRAM_ID)
+        memcmp_filter = tok_group.filters.add()
+        memcmp_filter.memcmp.offset = 32
+        memcmp_filter.memcmp.bytes = _base58_decode(wallet)
+
+    request.commitment = commitment  # 0 = PROCESSED
+    if from_slot > 0:
+        request.from_slot = from_slot
+
+    return request
+
+
+# ---------------------------------------------------------------------------
+# GeyserAccountSubscriptionSource — LIVE Yellowstone accountSubscribe transport
+# ---------------------------------------------------------------------------
+
+
+class GeyserAccountSubscriptionSource:
+    """LIVE Yellowstone/Geyser gRPC accountSubscribe transport.
+
+    Subscribes to the `accounts` filters built by
+    `_build_account_subscribe_request()` (scoped to tracked wallets only --
+    never a firehose) and yields RawAccountUpdate for every account write.
+
+    CREDENTIALS -- from environment only, NEVER hardcoded or logged:
+      GEYSER_ENDPOINT, GEYSER_TOKEN (same variables GeyserTransport uses).
+
+    RECONNECT:
+      Exponential backoff + jitter (mirrors GeyserTransport exactly).
+      Resumes `from_slot` = the last slot successfully yielded.  A dead feed
+      never fails silently -- it surfaces via SmartWalletStreamStats.data_staleness_ms
+      rising in the caller (SmartWalletStream) while this class retries.
+
+    GRACEFUL DEGRADATION:
+      - Empty GEYSER_ENDPOINT or empty wallet_addresses: logs a clear error
+        and yields nothing (no crash).
+      - gRPC error mid-stream: reconnects from last_slot.
+    """
+
+    _RETRY_MIN_WAIT_S: float = 1.0
+    _RETRY_MAX_WAIT_S: float = 30.0
+    _RETRY_MULTIPLIER: float = 2.0
+
+    def __init__(
+        self,
+        endpoint: str,       # env: GEYSER_ENDPOINT -- NEVER a literal in code
+        x_token: str,        # env: GEYSER_TOKEN -- NEVER hardcoded, NEVER logged
+        commitment: int = 0,  # CommitmentLevel.PROCESSED = 0
+        max_reconnect_attempts: int = 0,  # 0 = infinite
+    ) -> None:
+        self._endpoint = endpoint
+        self._x_token = x_token  # NOT logged, NOT serialized
+        self._commitment = commitment
+        self._max_reconnect_attempts = max_reconnect_attempts
+        self._connected = False
+        import random
+        self._rng = random.Random()
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+    async def subscribe(  # type: ignore[override]
+        self,
+        wallet_addresses: frozenset[str],
+        last_slot: int = 0,
+    ) -> AsyncIterator[RawAccountUpdate]:
+        """Stream RawAccountUpdates from Yellowstone Geyser accountSubscribe."""
+        if not self._endpoint:
+            logger.error(
+                "GeyserAccountSubscriptionSource.subscribe(): GEYSER_ENDPOINT is not "
+                "set.  Set GEYSER_ENDPOINT + GEYSER_TOKEN (see .env.example).  "
+                "Yielding nothing -- use MockAccountSubscriptionSource for offline testing."
+            )
+            return
+
+        if not wallet_addresses:
+            logger.info(
+                "GeyserAccountSubscriptionSource.subscribe(): wallet_addresses is "
+                "empty -- nothing to subscribe to."
+            )
+            return
+
+        from aats.ingestion.transport import _import_geyser_proto
+
+        try:
+            geyser_pb2, geyser_pb2_grpc = _import_geyser_proto()
+        except ImportError as exc:
+            logger.error("GeyserAccountSubscriptionSource: proto stubs unavailable: %s", exc)
+            return
+
+        import asyncio
+
+        import grpc
+        import grpc.aio
+
+        current_slot = last_slot
+        attempt = 0
+
+        while True:
+            attempt += 1
+            if self._max_reconnect_attempts > 0 and attempt > self._max_reconnect_attempts:
+                logger.error(
+                    "GeyserAccountSubscriptionSource: max reconnect attempts (%d) "
+                    "reached -- giving up.",
+                    self._max_reconnect_attempts,
+                )
+                break
+
+            try:
+                logger.info(
+                    "GeyserAccountSubscriptionSource: connecting to %s "
+                    "(attempt %d, %d wallets, from_slot=%d)",
+                    self._endpoint, attempt, len(wallet_addresses), current_slot,
+                )
+                async for upd in self._stream_once(
+                    geyser_pb2, geyser_pb2_grpc, grpc, wallet_addresses, current_slot
+                ):
+                    current_slot = upd.slot
+                    yield upd
+                logger.info(
+                    "GeyserAccountSubscriptionSource: stream ended cleanly at "
+                    "slot %d -- reconnecting.",
+                    current_slot,
+                )
+            except grpc.aio.AioRpcError as rpc_err:
+                self._connected = False
+                logger.warning(
+                    "GeyserAccountSubscriptionSource: gRPC error (attempt %d): %s %s "
+                    "-- reconnecting.",
+                    attempt, rpc_err.code(), rpc_err.details(),
+                )
+            except asyncio.CancelledError:
+                self._connected = False
+                logger.info("GeyserAccountSubscriptionSource: cancelled -- shutting down.")
+                raise
+            except Exception as exc:  # noqa: BLE001
+                self._connected = False
+                logger.warning(
+                    "GeyserAccountSubscriptionSource: unexpected error (attempt %d): "
+                    "%s -- reconnecting.",
+                    attempt, exc, exc_info=True,
+                )
+
+            wait_s = min(
+                self._RETRY_MIN_WAIT_S * (self._RETRY_MULTIPLIER ** (attempt - 1)),
+                self._RETRY_MAX_WAIT_S,
+            )
+            jitter = self._rng.uniform(0, wait_s * 0.25)
+            sleep_s = wait_s + jitter
+            logger.info(
+                "GeyserAccountSubscriptionSource: waiting %.2fs before reconnect "
+                "(from_slot=%d).",
+                sleep_s, current_slot,
+            )
+            await asyncio.sleep(sleep_s)
+
+    async def _stream_once(
+        self,
+        geyser_pb2: object,
+        geyser_pb2_grpc: object,
+        grpc: object,
+        wallet_addresses: frozenset[str],
+        from_slot: int,
+    ) -> AsyncIterator[RawAccountUpdate]:
+        """Open one gRPC stream and yield RawAccountUpdates until it closes."""
+        ssl_credentials = grpc.ssl_channel_credentials()
+        auth_credentials = grpc.metadata_call_credentials(
+            lambda _, callback: callback((("x-token", self._x_token),), None),
+            name="x-token-auth",
+        )
+        channel_credentials = grpc.composite_channel_credentials(
+            ssl_credentials, auth_credentials
+        )
+        channel_options = [
+            ("grpc.keepalive_time_ms", 10_000),
+            ("grpc.keepalive_timeout_ms", 5_000),
+            ("grpc.keepalive_permit_without_calls", 1),
+            ("grpc.http2.max_pings_without_data", 0),
+        ]
+
+        async with grpc.aio.secure_channel(
+            self._endpoint, channel_credentials, options=channel_options,
+        ) as channel:
+            stub = geyser_pb2_grpc.GeyserStub(channel)
+            request = _build_account_subscribe_request(
+                geyser_pb2, wallet_addresses, from_slot, self._commitment
+            )
+
+            logger.info(
+                "GeyserAccountSubscriptionSource: subscribing -- %d wallet(s), "
+                "commitment=%d, from_slot=%d",
+                len(wallet_addresses), self._commitment, from_slot,
+            )
+
+            self._connected = True
+
+            async def _request_iter():
+                yield request
+
+            async for update in stub.Subscribe(_request_iter()):
+                if not update.HasField("account"):
+                    continue  # slot, block_meta, ping, pong -- not an account write
+                acc_upd = update.account       # SubscribeUpdateAccount
+                info = acc_upd.account          # SubscribeUpdateAccountInfo
+
+                from aats.ingestion.transport import _bytes_to_base58
+
+                yield RawAccountUpdate(
+                    pubkey=_bytes_to_base58(bytes(info.pubkey)),
+                    owner_program=_bytes_to_base58(bytes(info.owner)),
+                    slot=int(acc_upd.slot),
+                    lamports=int(info.lamports),
+                    data=bytes(info.data),
+                    write_version=int(info.write_version),
+                    is_startup=bool(acc_upd.is_startup),
+                )
+
+        self._connected = False
+
+
+# ---------------------------------------------------------------------------
+# make_rpc_block_time_resolver — LIVE on-chain block-time resolver (getBlockTime)
+# ---------------------------------------------------------------------------
+
+
+def make_rpc_block_time_resolver(rpc_url: str) -> BlockTimeResolver:
+    """Build a BlockTimeResolver backed by a standard JSON-RPC getBlockTime call.
+
+    Purely on-chain -- NEVER substitutes wall-clock (T-300a).  Returns None
+    (event held pending downstream) if the RPC call fails or the slot has no
+    confirmed block time yet.
+
+    Args:
+        rpc_url: RPC_PRIMARY from the environment (never hardcoded, never logged).
+    """
+
+    async def _resolve(slot: int) -> int | None:
+        try:
+            import httpx
+        except ImportError:
+            logger.error(
+                "make_rpc_block_time_resolver: httpx not installed -- "
+                "cannot resolve block_time for slot %d.",
+                slot,
+            )
+            return None
+
+        # httpx/httpcore emit their OWN "HTTP Request: POST <url> ..." log
+        # line at INFO/DEBUG via the standard logging module -- and that
+        # line embeds the full URL, api-key included.  Silencing these
+        # library loggers is required (not optional) whenever rpc_url may
+        # carry a credential in its query string; a permissive root-logger
+        # config elsewhere in the app must never be able to leak it.
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getBlockTime",
+            "params": [slot],
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(rpc_url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPStatusError as exc:
+            # exc / str(exc) embeds the full request URL -- rpc_url may carry
+            # an api-key query param (e.g. Helius).  Log ONLY the status code,
+            # NEVER the exception object or the URL.
+            logger.debug(
+                "getBlockTime(%d) HTTP %s", slot, exc.response.status_code
+            )
+            return None
+        except Exception as exc:  # noqa: BLE001
+            # Some httpx exceptions (e.g. ConnectError, ReadTimeout) also
+            # stringify the request URL -- log only the exception type.
+            logger.debug("getBlockTime(%d) failed (%s)", slot, type(exc).__name__)
+            return None
+
+        result = data.get("result")
+        if result is None:
+            return None
+        return int(result) * 1_000  # on-chain unix seconds -> ms
+
+    return _resolve
+
+
+# ---------------------------------------------------------------------------
+# GeyserSmartWalletBackend — LIVE SmartWalletBackend (satisfies the Protocol)
+# ---------------------------------------------------------------------------
+
+
+class GeyserSmartWalletBackend:
+    """LIVE SmartWalletBackend: Geyser accountSubscribe -> RawWalletUpdate.
+
+    This is the production implementation of the `SmartWalletBackend`
+    Protocol.  It wraps an injectable `AccountSubscriptionSource` (live:
+    GeyserAccountSubscriptionSource; tests: MockAccountSubscriptionSource)
+    and decodes raw account writes into balance-delta RawWalletUpdates that
+    feed the EXISTING, UNCHANGED SmartWalletDecoder / SmartWalletStream --
+    every safety property downstream (disabled-by-default, 20-wallet cap,
+    dedup, honest lag, no-wall-clock-substitution, count-only selectivity)
+    is enforced there and is NOT re-implemented or bypassed here.
+
+    HONEST BLOCK-TIME RESOLUTION (T-300a):
+      Geyser account updates carry `slot` but NEVER `block_time`.
+      `fill_block_time_ms` is resolved via the injected
+      `block_time_resolver(slot)` callable (e.g. `make_rpc_block_time_resolver`,
+      an on-chain getBlockTime RPC call).  If the resolver returns None (or
+      is not configured, or raises), the RawWalletUpdate carries
+      `fill_block_time_ms=None` and the existing SmartWalletDecoder holds the
+      event PENDING.  Wall-clock is NEVER substituted.
+
+    HONEST LAG ACCOUNTING:
+      `observation_slot` is set equal to `fill_slot`.  Yellowstone's `slot`
+      field IS both "the slot this account was written in" and the slot
+      carried by the notification -- we do not run an independent
+      validator/slot-clock, so we never invent a finer-grained observation
+      slot.  `entry_lag_slots` will therefore typically read 0 on this live
+      path.  The genuinely non-zero, honestly measured latency is
+      `observation_lag_ms` (wall-clock at decode minus the RESOLVED on-chain
+      block_time) -- that is where real lag surfaces.  This is a documented
+      property of the live path, not a fabricated zero.
+
+    SOL LEG (documented limitation, non-blocking):
+      A single SPL Token Account write reveals only the TOKEN balance delta.
+      The paired SOL leg of the trade is NOT derivable from that write alone
+      (it would require correlating a same-slot native-account lamports
+      delta, which is noisy -- fees / rent / other same-slot activity
+      confound it).  `sol_amount_lamports` is therefore emitted as `0` on
+      this live path.  It is NEVER fabricated or estimated.
+      `count_smart_wallets_in()` does not read `sol_amount_lamports`, so
+      this has NO safety-critical consequence -- it only affects an
+      informational field on the bus.
+
+    STARTUP SNAPSHOT:
+      The first observation per (wallet, mint) -- or per wallet for the
+      native balance -- is the PRE-EXISTING balance (Yellowstone marks it
+      `is_startup=True`).  It seeds the baseline WITHOUT emitting a
+      RawWalletUpdate: it is not a "fill", it is the balance that existed
+      before we subscribed.
+
+    NEVER A TRADE PATHWAY:
+      This class only ever produces a RawWalletUpdate (a data record).  It
+      holds no keypair, calls no send/sign/submit path, and is READ-SIDE ONLY.
+    """
+
+    def __init__(
+        self,
+        source: AccountSubscriptionSource,
+        block_time_resolver: BlockTimeResolver | None = None,
+    ) -> None:
+        self._source = source
+        self._resolver = block_time_resolver
+        # Baselines seeded on the first (startup) observation per key, then
+        # updated on every subsequent write so deltas are always relative to
+        # the last known balance.
+        self._token_baseline: dict[tuple[str, str], int] = {}  # (wallet, mint) -> amount
+        self._native_baseline: dict[str, int] = {}              # wallet -> lamports
+
+    @property
+    def is_connected(self) -> bool:
+        source_is_connected = getattr(self._source, "is_connected", None)
+        return bool(source_is_connected) if source_is_connected is not None else False
+
+    async def subscribe(  # type: ignore[override]
+        self,
+        wallet_addresses: frozenset[str],
+        last_slot: int = 0,
+    ) -> AsyncIterator[RawWalletUpdate]:
+        """Yield RawWalletUpdates decoded from live Geyser account writes."""
+        async for acc in self._source.subscribe(wallet_addresses, last_slot):
+            update = await self._to_wallet_update(acc, wallet_addresses)
+            if update is not None:
+                yield update
+
+    async def _to_wallet_update(
+        self,
+        acc: RawAccountUpdate,
+        wallet_addresses: frozenset[str],
+    ) -> RawWalletUpdate | None:
+        """Turn one RawAccountUpdate into a RawWalletUpdate, or None.
+
+        Returns None for: the wallets' own native-account writes (they carry
+        no mint and cannot alone become a SmartMoneyEvent), startup snapshots
+        (baseline-only), non-token-account data, untracked owners (defensive
+        fail-closed), and zero-delta writes (no balance change).
+        """
+        # Case 1: the wallet's own native (System-Program-owned) account.
+        if acc.pubkey in wallet_addresses:
+            self._native_baseline[acc.pubkey] = acc.lamports
+            # A native SOL write alone carries no mint and cannot become a
+            # SmartMoneyEvent by itself -- seed-only, never emitted.
+            return None
+
+        # Case 2: a candidate SPL token account -- decode (mint, owner, amount).
+        decoded = _decode_spl_token_account(acc.data)
+        if decoded is None:
+            return None
+        mint, owner, amount = decoded
+
+        if owner not in wallet_addresses:
+            # Defensive fail-closed: the source's own memcmp filter should
+            # already scope this to tracked wallets, but never trust the
+            # upstream transport blindly.
+            logger.debug(
+                "GeyserSmartWalletBackend: token account owner=%s is not a "
+                "tracked wallet -- dropping (defensive filter).",
+                owner,
+            )
+            return None
+
+        key = (owner, mint)
+        prior_amount = self._token_baseline.get(key)
+        self._token_baseline[key] = amount
+
+        if acc.is_startup or prior_amount is None:
+            # Seed the baseline with the pre-existing balance; not a fill.
+            return None
+
+        delta = amount - prior_amount
+        if delta == 0:
+            return None  # no balance change -- not a fill
+
+        is_buy = delta > 0
+        token_delta_base = abs(delta)
+
+        fill_block_time_ms: int | None = None
+        if self._resolver is not None:
+            try:
+                fill_block_time_ms = await self._resolver(acc.slot)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "GeyserSmartWalletBackend: block_time_resolver(%d) failed: %s "
+                    "-- event will be held PENDING (T-300a: no wall-clock substitution).",
+                    acc.slot, exc,
+                )
+                fill_block_time_ms = None
+
+        return RawWalletUpdate(
+            wallet=owner,
+            mint=mint,
+            fill_slot=acc.slot,
+            fill_block_time_ms=fill_block_time_ms,
+            observation_slot=acc.slot,  # see class docstring: no independent slot clock
+            observation_wall_ms=int(time.time() * 1_000),
+            is_buy=is_buy,
+            sol_delta_lamports=0,  # see class docstring: SOL leg not derivable from this write
+            token_delta_base=token_delta_base,
+            source="accounts_subscribe",
+        )
+
+
+def build_geyser_smart_wallet_backend_from_env() -> GeyserSmartWalletBackend:
+    """Factory: build a production GeyserSmartWalletBackend from environment.
+
+    Reads GEYSER_ENDPOINT / GEYSER_TOKEN (same variables GeyserTransport
+    uses) and RPC_PRIMARY (for the on-chain getBlockTime resolver).  Never
+    logs credential values.  Safe to call even with missing env vars: the
+    resulting backend degrades gracefully (logs a clear error, yields
+    nothing) exactly like GeyserTransport / EnhancedWsFallback do.
+
+    This factory is NOT invoked by any hot-path module by default -- wiring
+    it into a runner is a deliberate, explicit operator action (SmartWalletStream
+    itself stays DISABLED unless SmartWalletConfig.enabled=True is also set).
+    """
+    import os
+
+    endpoint = os.environ.get("GEYSER_ENDPOINT", "")
+    x_token = os.environ.get("GEYSER_TOKEN") or os.environ.get("GEYSER_X_TOKEN", "")
+    rpc_url = os.environ.get("RPC_PRIMARY", "")
+
+    source = GeyserAccountSubscriptionSource(endpoint=endpoint, x_token=x_token)
+    resolver = make_rpc_block_time_resolver(rpc_url) if rpc_url else None
+    return GeyserSmartWalletBackend(source=source, block_time_resolver=resolver)
 
 
 # ---------------------------------------------------------------------------

@@ -165,10 +165,10 @@ async def test_future_posts_excluded_and_score_changes():
     pipe_without_future = MCSSentimentPipeline.offline(preloaded_posts=ORGANIC_POSTS)
     pipe_with_future = MCSSentimentPipeline.offline(preloaded_posts=ORGANIC_PLUS_FUTURE)
 
-    mcs_clean, _, _news_clean = await pipe_without_future.score(
+    mcs_clean, _, _news_clean, _vel_clean = await pipe_without_future.score(
         _ASSET, ["solana", "gem", "launch"], DECISION_TIME_MS
     )
-    mcs_with_future, ev_with_future, _news_future = await pipe_with_future.score(
+    mcs_with_future, ev_with_future, _news_future, _vel_future = await pipe_with_future.score(
         _ASSET, ["solana", "gem", "launch"], DECISION_TIME_MS
     )
 
@@ -192,7 +192,7 @@ async def test_future_posts_excluded_and_score_changes():
 async def test_score_with_only_future_posts_is_empty():
     """If all posts are future, conviction must be 0 (no data)."""
     pipe = MCSSentimentPipeline.offline(preloaded_posts=FUTURE_POSTS)
-    mcs, ev, _news = await pipe.score(_ASSET, ["solana"], DECISION_TIME_MS)
+    mcs, ev, _news, _vel = await pipe.score(_ASSET, ["solana"], DECISION_TIME_MS)
     assert mcs.conviction == 0.0
     assert mcs.post_count == 0
 

@@ -32,10 +32,20 @@ Reddit (asyncpraw):
   - Public API, no auth needed for read-only search.
   - Rate: 60 requests/minute; asyncpraw enforces this automatically.
 
-Telegram (telethon):
-  - Channel/group monitoring via the MTProto API.
-  - Requires an API_ID + API_HASH + session string (never in code).
-  - We monitor specific pre-configured channels; we do NOT crawl.
+Telegram (telethon) — EN3, REAL implementation:
+  - Channel monitoring via the MTProto API, restricted to a PRE-CONFIGURED
+    call-channel allowlist (MCS_TELEGRAM_CHANNEL_IDS). We do NOT crawl or
+    search dialogs -- only the allowlisted channel_ids are ever queried.
+  - Requires API_ID + API_HASH + session string, injected from Vault/.env
+    ONLY (TELEGRAM_MTProto_API_ID / _API_HASH / _SESSION) -- never hardcoded,
+    never logged.
+  - INJECTABLE exactly like aats/telegram/client.py: `OfflineTelegramMTProtoClient`
+    is the deterministic in-memory fake used by EVERY test (no network, no
+    MTProto session); `HttpTelegramMTProtoClient` is the real telethon-backed
+    client, lazily imported and constructed ONLY at runtime with real creds --
+    it is never exercised by the test suite.
+  - event_time_ms is stamped from the Telegram message's `date` field (T-300a
+    platform time), NEVER wall-clock at fetch time.
 
 News (E7):
   - Crypto-native: CoinDesk, The Block, Cointelegraph (RSS feeds).
@@ -51,9 +61,13 @@ Real endpoints marked with `# REAL-ENDPOINT` comments.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import time
 from dataclasses import dataclass, field
-from typing import Protocol
+from datetime import UTC, datetime
+from typing import Protocol, runtime_checkable
 
 from aats.sentiment.models import NewsItem, RawPost
 
@@ -257,26 +271,395 @@ class RedditAdapter:
 
 
 # ---------------------------------------------------------------------------
-# Telegram adapter (telethon stub)
+# Telegram adapter (telethon — EN3 REAL implementation, injectable client)
 # ---------------------------------------------------------------------------
+
+
+def _redact_telegram_secret(value: str | None) -> str:
+    """Log-safe redaction for a Telegram api_hash / session_string.
+
+    NEVER echoes the raw secret.  Placeholder values from `.env.example`
+    (angle-bracketed) are reported as `<placeholder>`, not the literal text,
+    so a stray log line can never be mistaken for "a real secret was here".
+    """
+    if not value:
+        return "<unset>"
+    if value.startswith("<") and value.endswith(">"):
+        return "<placeholder>"
+    if len(value) <= 4:
+        return "<redacted>"
+    return f"{value[:4]}...<redacted>"
+
+
+@dataclass(frozen=True)
+class TelegramRawMessage:
+    """Wire-level Telegram channel message (from telethon or the offline fake).
+
+    Decouples the `TelegramMTProtoClient` seam from `aats.sentiment.models.RawPost`
+    — mirrors `aats.telegram.client.SentMessage`'s "no token, no cross-module
+    coupling" pattern.
+
+    event_time_ms MUST come from the platform's `message.date` (T-300a) —
+    NEVER wall-clock at fetch time.
+    """
+
+    message_id: str
+    channel_id: int
+    sender_id: str
+    text: str  # QUOTED UNTRUSTED DATA — never executed as instructions
+    event_time_ms: int  # message.date — platform time, NEVER wall-clock
+
+
+@runtime_checkable
+class TelegramMTProtoClient(Protocol):
+    """The minimal inbound seam `TelegramAdapter` depends on.
+
+    Mirrors `aats.telegram.client.TelegramClient`'s injectable-seam pattern:
+    `OfflineTelegramMTProtoClient` is the deterministic in-memory fake used by
+    EVERY test (no network, no MTProto session ever opened); `HttpTelegramMTProtoClient`
+    is the real telethon-backed implementation, lazily imported and constructed
+    ONLY at runtime with real credentials, and NEVER exercised in tests.
+    """
+
+    async def iter_channel_messages(
+        self,
+        channel_id: int,
+        min_event_time_ms: int,
+        max_event_time_ms: int,
+        limit: int,
+    ) -> list[TelegramRawMessage]:
+        """Return messages for ONE pre-configured channel_id — no crawl/search.
+
+        Implementations MUST restrict themselves to the single `channel_id`
+        passed in (never a dialog-wide search) and MUST stamp event_time_ms
+        from the platform's message timestamp, never wall-clock at fetch.
+        """
+        ...
+
+
+@dataclass
+class OfflineTelegramMTProtoClient:
+    """Deterministic offline fake — the default (and ONLY) client in tests.
+
+    Preloaded per-channel message fixtures.  NO network, NO MTProto session is
+    ever opened.  `iter_channel_messages` filters by the requested channel_id
+    and the `[min_event_time_ms, max_event_time_ms]` window, exactly mirroring
+    the contract the real telethon-backed client fulfils.
+
+    `requested_channel_ids` records every channel_id this fake was asked for,
+    so tests can assert the adapter never queried outside its allowlist.
+    """
+
+    messages_by_channel: dict[int, list[TelegramRawMessage]] = field(default_factory=dict)
+    call_count: int = field(default=0, init=False)
+    requested_channel_ids: list[int] = field(default_factory=list, init=False)
+
+    async def iter_channel_messages(
+        self,
+        channel_id: int,
+        min_event_time_ms: int,
+        max_event_time_ms: int,
+        limit: int,
+    ) -> list[TelegramRawMessage]:
+        self.call_count += 1
+        self.requested_channel_ids.append(channel_id)
+        msgs = self.messages_by_channel.get(channel_id, [])
+        in_window = [
+            m for m in msgs if min_event_time_ms <= m.event_time_ms <= max_event_time_ms
+        ]
+        return in_window[:limit]
+
+
+class HttpTelegramMTProtoClient:
+    """REAL telethon-backed MTProto client.  Constructed ONLY at runtime.
+
+    NEVER exercised in tests: no test in this repo constructs this class, so
+    `telethon` is never imported — and no MTProto session is ever opened —
+    under pytest.  `api_id` / `api_hash` / `session_string` are injected from
+    Vault/.env at deploy time and are NEVER hardcoded or logged in the clear.
+
+    Restricted, by construction, to `iter_channel_messages(channel_id, ...)`
+    for ONE pre-configured channel at a time — there is no dialog-wide
+    search/crawl method on this class.
+    """
+
+    def __init__(
+        self,
+        api_id: int,
+        api_hash: str,
+        session_string: str,
+        *,
+        timeout_s: float = 20.0,
+    ) -> None:
+        if not api_id or not api_hash or not session_string:
+            raise ValueError(
+                "HttpTelegramMTProtoClient requires api_id/api_hash/session_string "
+                "(runtime-injected from Vault/.env; never hardcoded)."
+            )
+        # Lazy import: telethon is an OPTIONAL runtime dependency. It is never
+        # imported at module load time and never required to run the test
+        # suite — this constructor (and therefore telethon itself) is only
+        # ever reached when real credentials are runtime-injected.
+        from telethon import TelegramClient
+        from telethon.sessions import StringSession
+
+        self._api_id = api_id
+        self._api_hash_fingerprint = _redact_telegram_secret(api_hash)
+        self._timeout_s = timeout_s
+        self._client = TelegramClient(StringSession(session_string), api_id, api_hash)
+        self._started = False
+
+    async def _ensure_connected(self) -> None:
+        if not self._started:
+            await self._client.connect()
+            self._started = True
+
+    async def iter_channel_messages(
+        self,
+        channel_id: int,
+        min_event_time_ms: int,
+        max_event_time_ms: int,
+        limit: int,
+    ) -> list[TelegramRawMessage]:
+        await self._ensure_connected()
+        # offset_date bounds the fetch AT THE SOURCE: telethon returns only
+        # messages strictly before this date, so decision-time-future messages
+        # are never even transferred (cost guard + point-in-time contract).
+        offset_date = datetime.fromtimestamp(max_event_time_ms / 1000.0, tz=UTC)
+        out: list[TelegramRawMessage] = []
+        try:
+            async for msg in self._client.iter_messages(
+                channel_id,  # PRE-CONFIGURED allowlist entry ONLY — no search
+                offset_date=offset_date,
+                limit=limit,
+            ):
+                if msg.date is None or not msg.message:
+                    continue
+                event_time_ms = int(msg.date.timestamp() * 1000)  # T-300a: platform time
+                if event_time_ms > max_event_time_ms:
+                    continue  # defensive; offset_date already excludes these
+                if event_time_ms < min_event_time_ms:
+                    break  # telethon streams newest-first; older than window -> stop (cost guard)
+                out.append(
+                    TelegramRawMessage(
+                        message_id=str(msg.id),
+                        channel_id=channel_id,
+                        sender_id=str(msg.sender_id) if msg.sender_id is not None else "unknown",
+                        text=msg.message,
+                        event_time_ms=event_time_ms,
+                    )
+                )
+        except Exception as exc:  # noqa: BLE001 — re-raised without leaking creds
+            raise RuntimeError(
+                f"telegram mtproto fetch failed (api_id={self._api_id}, "
+                f"api_hash={self._api_hash_fingerprint}): {type(exc).__name__}"
+            ) from None
+        return out
+
+    async def aclose(self) -> None:
+        if self._started:
+            await self._client.disconnect()
+
+
+def _telegram_message_to_raw_post(msg: TelegramRawMessage) -> RawPost:
+    """Map a wire-level Telegram message to the pipeline's RawPost shape.
+
+    Telegram (MTProto) does not expose per-user account-creation dates,
+    follower graphs, or verification badges the way X does — call channels are
+    channel-authored broadcast content.  We report the most SKEPTICAL values
+    Tier-A can safely bot/age-weight on (bot/age weighting only ever REDUCES
+    influence — an "unknown" provenance must default to the least-trusting
+    value, never the most-trusting one):
+      - account_age_days=0.0   -> `_account_age_weight` maps this to 0.0
+        (zero influence weight), never up-weighted.
+      - follower_count/following_count=0 -> no public follow graph on
+        Telegram; the bot-score follower/following-ratio check is skipped
+        (following_count > 0 guard), it never AWARDS points for this.
+      - is_verified=False, has_default_avatar=True -> conservative defaults;
+        has_default_avatar=True adds to the bot score (never subtracts).
+      - posting_cadence_per_day=0.0 -> "no cadence evidence", not "confirmed
+        low cadence"; the bot-score cadence check only ever adds weight for
+        HIGH cadence, so 0.0 here is a neutral (never a bonus) input.
+    """
+    return RawPost(
+        post_id=f"tg:{msg.channel_id}:{msg.message_id}",
+        source="telegram",
+        author_id=msg.sender_id,
+        text=msg.text,  # QUOTED UNTRUSTED DATA — never executed as instructions
+        event_time_ms=msg.event_time_ms,  # T-300a: platform time, NEVER wall-clock
+        fetch_time_ms=int(time.time() * 1000),  # monitoring only — NOT a join anchor
+        account_age_days=0.0,
+        follower_count=0,
+        following_count=0,
+        like_count=0,
+        reply_count=0,
+        repost_count=0,
+        is_verified=False,
+        has_default_avatar=True,
+        posting_cadence_per_day=0.0,
+    )
+
+
+def _clean_env_value(raw: str | None) -> str | None:
+    """Return None for unset/placeholder env values, else the stripped value.
+
+    A `.env.example` placeholder is angle-bracketed (e.g. `<vault-ref: ...>`);
+    such values are NEVER treated as real credentials.
+    """
+    if raw is None:
+        return None
+    v = raw.strip()
+    if not v or (v.startswith("<") and v.endswith(">")):
+        return None
+    return v
 
 
 @dataclass
 class TelegramAdapter:
-    """Telegram adapter via telethon.
+    """Telegram adapter via telethon (EN3 — REAL implementation).
 
-    REAL-ENDPOINT: Telegram MTProto API via telethon
-    INJECTABLE: api_id, api_hash, session_string from env; never hardcoded.
-    OFFLINE: returns [] when api_id is None.
+    REAL-ENDPOINT: Telegram MTProto API via telethon.
+    INJECTABLE: `client` (a `TelegramMTProtoClient`) is the seam this adapter
+    depends on — tests ALWAYS inject an `OfflineTelegramMTProtoClient`; the
+    real `HttpTelegramMTProtoClient` is built lazily, only at runtime, only
+    when real `api_id`/`api_hash`/`session_string` are configured AND no
+    `client` was explicitly injected.  No test ever opens a real MTProto
+    session.
 
-    We monitor specific channels (pre-configured); we do NOT crawl.
-    event_time_ms comes from the Telegram message date (not fetch time).
+    ALLOWLIST ONLY: `channel_ids` is the PRE-CONFIGURED call-channel allowlist
+    (`MCS_TELEGRAM_CHANNEL_IDS`).  This adapter NEVER crawls dialogs or
+    searches beyond the configured channel_ids — an empty allowlist means
+    zero channels are ever queried, regardless of credentials.
+
+    event_time_ms comes from the Telegram message `date` field (T-300a
+    platform time), NEVER fetch wall-clock time.
     """
 
-    api_id: int | None  # inject from env
-    api_hash: str | None  # inject from env
-    session_string: str | None  # inject from env; Vault-managed in production
-    channel_ids: list[int] = field(default_factory=list)
+    api_id: int | None  # inject from env (TELEGRAM_MTProto_API_ID); never hardcoded
+    # api_hash / session_string are excluded from the dataclass repr (repr=False)
+    # so a stray `repr(adapter)` / log of the adapter object can NEVER leak the
+    # secret in the clear — same discipline as HttpTelegramClient's redact_token.
+    api_hash: str | None = field(repr=False)  # TELEGRAM_MTProto_API_HASH; never hardcoded/logged
+    session_string: str | None = field(repr=False)  # TELEGRAM_MTProto_SESSION; Vault-managed
+    channel_ids: list[int] = field(default_factory=list)  # MCS_TELEGRAM_CHANNEL_IDS allowlist
+    max_messages_per_channel: int = 200
+    max_retries: int = 3
+    # INJECTABLE seam: tests set this to an OfflineTelegramMTProtoClient.
+    # Left None in production config; built lazily via _build_real_client().
+    client: TelegramMTProtoClient | None = None
+
+    @classmethod
+    def from_env(cls, env: dict[str, str] | None = None) -> TelegramAdapter:
+        """Build a TelegramAdapter from the environment (`.env.example` schema).
+
+        Reads:
+          TELEGRAM_MTProto_API_ID    -- int; placeholder/unset -> None
+          TELEGRAM_MTProto_API_HASH  -- str; placeholder/unset -> None
+          TELEGRAM_MTProto_SESSION   -- str; placeholder/unset -> None
+          MCS_TELEGRAM_CHANNEL_IDS   -- comma-separated int channel IDs (the
+                                        PRE-CONFIGURED call-channel allowlist)
+
+        `env` is injectable for testing (defaults to `os.environ`).  This
+        classmethod NEVER logs a raw credential value.  When credentials are
+        placeholders/unset, `fetch_posts()` runs offline (returns []) unless a
+        `client` is separately injected after construction.
+        """
+        src = env if env is not None else dict(os.environ)
+
+        raw_api_id = _clean_env_value(src.get("TELEGRAM_MTProto_API_ID"))
+        api_id: int | None
+        try:
+            api_id = int(raw_api_id) if raw_api_id is not None else None
+        except ValueError:
+            logger.warning(
+                "TelegramAdapter.from_env: TELEGRAM_MTProto_API_ID is not an integer; "
+                "treating as unset."
+            )
+            api_id = None
+
+        api_hash = _clean_env_value(src.get("TELEGRAM_MTProto_API_HASH"))
+        session_string = _clean_env_value(src.get("TELEGRAM_MTProto_SESSION"))
+
+        raw_channel_ids = _clean_env_value(src.get("MCS_TELEGRAM_CHANNEL_IDS")) or ""
+        channel_ids: list[int] = []
+        for part in raw_channel_ids.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                channel_ids.append(int(part))
+            except ValueError:
+                logger.warning(
+                    "TelegramAdapter.from_env: skipping non-integer MCS_TELEGRAM_CHANNEL_IDS "
+                    "entry %r",
+                    part,
+                )
+
+        return cls(
+            api_id=api_id,
+            api_hash=api_hash,
+            session_string=session_string,
+            channel_ids=channel_ids,
+        )
+
+    def _build_real_client(self) -> TelegramMTProtoClient:
+        """Construct the REAL telethon-backed client. RUNTIME-ONLY code path.
+
+        Never invoked by any test: every test injects `client=` with an
+        `OfflineTelegramMTProtoClient`, so this method — and therefore
+        `telethon` itself — is never imported or executed under pytest.
+
+        Uses `raise ValueError` (never a bare `assert`) for the precondition
+        check: `assert` is stripped under `python -O`, which would silently
+        defeat this guard; `fetch_posts()` already checks this before calling
+        here, so this is a defensive second layer, not the only one.
+        """
+        if self.api_id is None or self.api_hash is None or self.session_string is None:
+            raise ValueError(
+                "TelegramAdapter._build_real_client: api_id/api_hash/session_string "
+                "must all be set before building the real telethon client."
+            )
+        return HttpTelegramMTProtoClient(
+            api_id=self.api_id,
+            api_hash=self.api_hash,
+            session_string=self.session_string,
+        )
+
+    async def _fetch_channel_with_retry(
+        self,
+        client: TelegramMTProtoClient,
+        channel_id: int,
+        earliest_ms: int,
+        decision_time_ms: int,
+    ) -> list[TelegramRawMessage]:
+        """Bounded retry with exponential backoff — never burn quota aggressively."""
+        backoff_s = 1.0
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                return await client.iter_channel_messages(
+                    channel_id=channel_id,
+                    min_event_time_ms=earliest_ms,
+                    max_event_time_ms=decision_time_ms,
+                    limit=self.max_messages_per_channel,
+                )
+            except Exception as exc:  # noqa: BLE001 — transport errors only, logged + bounded
+                if attempt >= self.max_retries:
+                    logger.error(
+                        "TelegramAdapter: giving up on channel after %d attempt(s): %s",
+                        attempt,
+                        type(exc).__name__,
+                    )
+                    return []
+                logger.warning(
+                    "TelegramAdapter: fetch failed (attempt %d/%d): %s -- backing off %.1fs",
+                    attempt,
+                    self.max_retries,
+                    type(exc).__name__,
+                    backoff_s,
+                )
+                await asyncio.sleep(backoff_s)
+                backoff_s *= 2
+        return []
 
     async def fetch_posts(
         self,
@@ -284,42 +667,49 @@ class TelegramAdapter:
         decision_time_ms: int,
         lookback_window_ms: int,
     ) -> list[RawPost]:
-        """Fetch messages from pre-configured Telegram channels.
+        """Fetch messages from the pre-configured Telegram channel allowlist.
 
-        REAL-ENDPOINT: telethon TelegramClient.iter_messages()
-        Message.date (UTC) is the event_time (not fetch time).
+        ALLOWLIST ONLY: iterates `self.channel_ids` exclusively — never a
+        dialog-wide crawl or search.  An empty allowlist returns [] immediately,
+        regardless of credentials.
+
+        Point-in-time (T-300a): event_time_ms comes from `message.date`
+        (platform time). Messages are re-checked against
+        `[decision_time_ms - lookback_window_ms, decision_time_ms]` here even
+        though the real client already bounds its fetch at the source — this
+        is the same belt-and-braces pattern used by every other adapter.
         """
-        if self.api_id is None:
-            logger.info("TelegramAdapter: api_id=None (offline mode), returning []")
+        if not self.channel_ids:
+            logger.info(
+                "TelegramAdapter: channel_ids allowlist is empty (no crawl target), "
+                "returning []"
+            )
             return []
 
-        # --- REAL IMPLEMENTATION PLACEHOLDER ---
-        # In production:
-        #   from telethon import TelegramClient
-        #   from telethon.sessions import StringSession
-        #   async with TelegramClient(
-        #       StringSession(self.session_string), self.api_id, self.api_hash
-        #   ) as client:
-        #       posts = []
-        #       for channel_id in self.channel_ids:
-        #           async for msg in client.iter_messages(
-        #               channel_id,
-        #               offset_date=datetime.utcfromtimestamp(decision_time_ms / 1000),
-        #               limit=500,
-        #           ):
-        #               if any(kw.lower() in msg.message.lower() for kw in keywords):
-        #                   posts.append(RawPost(
-        #                       post_id=str(msg.id),
-        #                       source="telegram",
-        #                       event_time_ms=int(msg.date.timestamp() * 1000),  # NOT wall clock
-        #                       ...
-        #                   ))
-        #   return posts
-        raise NotImplementedError(
-            "TelegramAdapter.fetch_posts: real endpoint not implemented. "
-            "Inject MockSocialAdapter in tests. "
-            "REAL-ENDPOINT: telethon TelegramClient"
-        )
+        client = self.client
+        if client is None:
+            if self.api_id is None or self.api_hash is None or self.session_string is None:
+                logger.info(
+                    "TelegramAdapter: no credentials configured (offline mode), returning []"
+                )
+                return []
+            client = self._build_real_client()
+
+        earliest_ms = decision_time_ms - lookback_window_ms
+        lower_kw = [kw.lower() for kw in keywords]
+        posts: list[RawPost] = []
+        for channel_id in self.channel_ids:  # ALLOWLIST ONLY — never crawl beyond this set
+            raw_messages = await self._fetch_channel_with_retry(
+                client, channel_id, earliest_ms, decision_time_ms
+            )
+            for msg in raw_messages:
+                # Defensive point-in-time re-check (T-300a): NEVER wall-clock.
+                if not (earliest_ms <= msg.event_time_ms <= decision_time_ms):
+                    continue
+                if lower_kw and not any(kw in msg.text.lower() for kw in lower_kw):
+                    continue
+                posts.append(_telegram_message_to_raw_post(msg))
+        return posts
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ NOT block on social data.  Enforce this boundary:
   - MCS is a SLOW-loop output consumed by the SLOW-loop Reasoner (T-313).
   - If a task asks to use MCS in sizing or snipe trigger, REFUSE and flag.
 
-PIPELINE EXECUTION (E7 augmented):
+PIPELINE EXECUTION (E7 + EN2a augmented):
   1. Collect posts from all configured social adapters (X / Reddit / Telegram /
      Discord) AND news articles from all configured NewsAdapters — concurrently.
   2. Run Tier-A on social posts: filter, embed, dedup, score, cluster.
@@ -18,9 +18,13 @@ PIPELINE EXECUTION (E7 augmented):
   4. Run Tier-B: batch LLM call per asset on the social digest → MCSScore.
   5. Apply the news delta to the social MCS conviction (additively, clamped to [0,1]).
      A credible negative event is recorded in the evidence for the Reasoner.
-  6. Apply the global MCS directionality rule:
+  6. Run VelocitySignalComputer (E10) on the SAME RawPosts already ingested in
+     step 1 — NO external data dependency, no new adapter, no network call.
+     Apply signal.mcs_penalty to conviction the SAME additive-clamped way the
+     news delta is applied in step 5 (subtractive here since mcs_penalty >= 0).
+  7. Apply the global MCS directionality rule:
        MCS may ONLY reduce risk (veto/gate) — NEVER size up or widen a stop.
-  7. Return (MCSScore, MCSEvidence, NewsSignal).
+  8. Return (MCSScore, MCSEvidence, NewsSignal, VelocitySignal).
 
 NEWS HARD RULES (E7):
   - Positive / neutral news contributes mcs_delta = 0.0 (no upward effect).
@@ -29,11 +33,26 @@ NEWS HARD RULES (E7):
   - The Reasoner uses narrative_failure → FORCE_EXIT (de-risk only).
   - News is SLOW-LOOP ONLY — never read by SNIPE path.
 
+VELOCITY SIDECAR HARD RULES (EN2a — wires the previously-dormant E10 module,
+now backed by the EN5 `SocialAdapterVelocitySource` production source):
+  - VelocitySignal.mcs_penalty is ALWAYS >= 0.0 (proven in tests/sentiment/test_velocity.py);
+    wiring it in only ever SUBTRACTS from conviction, never adds.
+  - Built entirely from RawPosts this pipeline call already fetched, via
+    `SocialAdapterVelocitySource(posts=all_posts)` — the single source of truth
+    for the RawPost -> VelocityEvent mapping (aats/sentiment/velocity.py). No
+    recorded outcomes, no extra adapter, no extra network/LLM call.
+  - apply_velocity_penalty_to_conviction() (the DEF-E10-01 hardened helper) is
+    reused as-is: it raises ValueError on a forged negative penalty and clamps
+    defensively, so this wiring cannot accidentally raise conviction.
+  - VelocitySignal does NOT change the frozen MCSScore contract shape — it is a
+    sidecar return value, exactly like NewsSignal.
+
 COST GUARD:
   - Social adapters are cached by (asset, window) at the pipeline level.
   - News adapters are cached by (asset, window) similarly.
   - Tier-B caches by content hash at the scorer level.
   - Budget remaining is tracked and enforced.
+  - The velocity sidecar issues ZERO additional network/LLM calls (posts reused).
 """
 
 from __future__ import annotations
@@ -50,6 +69,12 @@ from aats.sentiment.models import MCSEvidence, NewsSignal, RawPost
 from aats.sentiment.news_scorer import score_news
 from aats.sentiment.tier_a import run_tier_a
 from aats.sentiment.tier_b import MockLLMBackend, TierBScorer
+from aats.sentiment.velocity import (
+    SocialAdapterVelocitySource,
+    VelocitySignal,
+    VelocitySignalComputer,
+    apply_velocity_penalty_to_conviction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +131,7 @@ class MCSSentimentPipeline:
         preloaded_posts: list[RawPost] | None = None,
         mock_llm_base_score: float = 0.0,
         preloaded_news: list | None = None,
-    ) -> "MCSSentimentPipeline":
+    ) -> MCSSentimentPipeline:
         """Factory: fully offline pipeline with mock adapters and mock LLM.
 
         Used in tests and CI environments.
@@ -142,11 +167,12 @@ class MCSSentimentPipeline:
         asset: str,
         keywords: list[str],
         decision_time_ms: int,
-    ) -> tuple[MCSScore, MCSEvidence, NewsSignal]:
-        """Score an asset at a specific point in time (E7 augmented).
+    ) -> tuple[MCSScore, MCSEvidence, NewsSignal, VelocitySignal]:
+        """Score an asset at a specific point in time (E7 + EN2a augmented).
 
-        Runs social pipeline (Tier-A + Tier-B) and news pipeline concurrently,
-        then combines their outputs into the final MCS conviction.
+        Runs social pipeline (Tier-A + Tier-B), news pipeline, and the velocity
+        sidecar (over the same ingested posts) then combines their outputs into
+        the final MCS conviction.
 
         Args:
             asset:            Mint address string.
@@ -156,14 +182,24 @@ class MCSSentimentPipeline:
                               This is the C-5 point-in-time correctness guarantee.
 
         Returns:
-            (MCSScore, MCSEvidence, NewsSignal) — the score, its full audit
-            trail, and the news narrative signal.
+            (MCSScore, MCSEvidence, NewsSignal, VelocitySignal) — the score, its
+            full audit trail, the news narrative signal, and the social-velocity
+            / bot-ratio sidecar signal (EN2a). VelocitySignal is an ADDITIONAL
+            sidecar output; it does not alter the frozen MCSScore contract shape.
 
         E7 NEWS RULES (enforced here):
             - news mcs_delta is in [-1.0, 0.0] — NEVER positive.
             - Final conviction = clamp(social_conviction + news_delta, 0.0, 1.0).
             - credible_negative_event is passed through to the Reasoner caller
               via the returned NewsSignal; the Reasoner decides narrative_failure.
+
+        EN2a VELOCITY RULES (enforced here):
+            - velocity.mcs_penalty is in [0.0, 1.0] — NEVER negative.
+            - Applied AFTER the news delta, via the SAME additive-clamped pattern:
+              new_conviction = clamp(conviction - velocity.mcs_penalty, 0.0, 1.0),
+              using the hardened apply_velocity_penalty_to_conviction() helper.
+            - No external data dependency: built from the RawPosts already
+              fetched in Stage 1 above — zero extra network/LLM calls.
         """
         # Build EventTime from decision_time_ms.
         approx_slot = max(1, decision_time_ms // 400)
@@ -257,10 +293,55 @@ class MCSSentimentPipeline:
             evidence.final_conviction = new_conviction
             evidence.red_flags = merged_red_flags
 
+        # --- Stage 6: Velocity sidecar (EN2a, backed by the EN5 production source) ---
+        # NO EXTERNAL DATA DEPENDENCY: SocialAdapterVelocitySource reshapes `all_posts`,
+        # the SAME RawPosts already fetched in Stage 1 / scored by Tier-A in Stage 2 —
+        # it performs zero additional fetch/network/LLM call of its own (see
+        # aats/sentiment/velocity.py). This is the single source of truth for the
+        # RawPost -> VelocityEvent mapping (including is_bot_scored via the Tier-A
+        # bot scorer) — the pipeline no longer keeps its own inline copy of it.
+        velocity_source = SocialAdapterVelocitySource(posts=all_posts)
+        velocity_signal = VelocitySignalComputer(source=velocity_source).compute(
+            asset, decision_time_ms
+        )
+
+        # --- Stage 7: Apply velocity penalty to social conviction (EN2a) ---
+        # SAME additive-clamped pattern as the news delta in Stage 5 above:
+        #   new_conviction = clamp(conviction - velocity.mcs_penalty, 0.0, 1.0)
+        # (subtractive here because VelocitySignal.mcs_penalty >= 0 by construction,
+        # whereas NewsSignal.mcs_delta <= 0 by construction — both stages can only
+        # LOWER conviction, never raise it).
+        # apply_velocity_penalty_to_conviction() is the DEF-E10-01 hardened helper:
+        # it raises ValueError on a forged negative penalty and clamps defensively,
+        # so this wiring cannot accidentally raise conviction even under misuse.
+        if velocity_signal.mcs_penalty > 0.0:
+            new_conviction = apply_velocity_penalty_to_conviction(
+                mcs_score.conviction, velocity_signal
+            )
+            # Rebuild MCSScore with adjusted conviction and merged red_flags
+            merged_red_flags = list(mcs_score.red_flags) + velocity_signal.red_flags
+            mcs_score = MCSScore(
+                asset=mcs_score.asset,
+                event_time=mcs_score.event_time,
+                conviction=new_conviction,
+                momentum=mcs_score.momentum,
+                novelty=mcs_score.novelty,
+                synchronicity=mcs_score.synchronicity,
+                account_age_median_days=mcs_score.account_age_median_days,
+                coordinated_shill_flag=mcs_score.coordinated_shill_flag,
+                red_flags=merged_red_flags,
+                post_count=mcs_score.post_count,
+                reasoning=mcs_score.reasoning,
+            )
+            # Reflect the velocity penalty in the evidence trail
+            evidence.final_conviction = new_conviction
+            evidence.red_flags = merged_red_flags
+
         logger.info(
             "pipeline: asset=%s social_posts=%d clusters=%d sync=%.3f "
             "conviction=%.3f penalty=%.3f shill=%s "
-            "news_articles=%d news_neg=%d credible_neg=%s news_delta=%.3f",
+            "news_articles=%d news_neg=%d credible_neg=%s news_delta=%.3f "
+            "velocity_penalty=%.3f velocity_bot_frac=%.2f velocity_cohort=%s",
             asset,
             digest.total_post_count,
             digest.unique_cluster_count,
@@ -272,9 +353,12 @@ class MCSSentimentPipeline:
             news_signal.negative_article_count,
             news_signal.credible_negative_event,
             news_signal.mcs_delta,
+            velocity_signal.mcs_penalty,
+            velocity_signal.bot_account_fraction,
+            velocity_signal.account_age_cohort_flag,
         )
 
-        return mcs_score, evidence, news_signal
+        return mcs_score, evidence, news_signal, velocity_signal
 
 
 # ---------------------------------------------------------------------------

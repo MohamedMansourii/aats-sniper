@@ -343,7 +343,7 @@ async def test_pipeline_ingests_discord_posts_via_mock_adapter():
     scorer = TierBScorer(llm)
     pipe = MCSSentimentPipeline(adapters=[adapter], tier_b=scorer)
 
-    mcs, ev, _news = await pipe.score(
+    mcs, ev, _news, _vel = await pipe.score(
         _ASSET, ["solana", "gem", "launch"], DECISION_TIME_MS
     )
     # The default lookback is 1 hour; DISCORD_ORGANIC_POSTS spans up to 2 hours
@@ -364,7 +364,7 @@ async def test_pipeline_discord_shill_conviction_below_organic():
     adapter_org.load_posts(DISCORD_ORGANIC_POSTS)
     llm_org = MockLLMBackend(base_score=0.5)
     pipe_org = MCSSentimentPipeline(adapters=[adapter_org], tier_b=TierBScorer(llm_org))
-    mcs_org, _, _news_org = await pipe_org.score(_ASSET, ["solana", "gem"], DECISION_TIME_MS)
+    mcs_org, _, _news_org, _vel_org = await pipe_org.score(_ASSET, ["solana", "gem"], DECISION_TIME_MS)
 
     adapter_shill = MockSocialAdapter()
     adapter_shill.load_posts(DISCORD_SHILL_POSTS)
@@ -372,7 +372,9 @@ async def test_pipeline_discord_shill_conviction_below_organic():
     pipe_shill = MCSSentimentPipeline(
         adapters=[adapter_shill], tier_b=TierBScorer(llm_shill)
     )
-    mcs_shill, _, _news_shill = await pipe_shill.score(_ASSET, ["solana", "gem"], DECISION_TIME_MS)
+    mcs_shill, _, _news_shill, _vel_shill = await pipe_shill.score(
+        _ASSET, ["solana", "gem"], DECISION_TIME_MS
+    )
 
     assert mcs_org.conviction > mcs_shill.conviction, (
         f"Organic Discord conviction {mcs_org.conviction:.3f} must exceed "

@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -223,6 +224,314 @@ class InMemoryCallerOutcomeStore:
     def get_universe_accuracy(self, as_of_ms: int) -> float:
         """Universe-level accuracy (all callers) at as_of_ms."""
         resolved = [o for o in self._outcomes if o.outcome_event_time_ms <= as_of_ms]
+        if not resolved:
+            return DEFAULT_UNIVERSE_ACCURACY
+        correct = sum(1 for o in resolved if o.outcome_correct)
+        return correct / len(resolved)
+
+
+# ---------------------------------------------------------------------------
+# ParquetCallerOutcomeStore (production backend — EN5)
+# ---------------------------------------------------------------------------
+
+# Columns the labels/ Parquet dataset (T-401 clean-room harness) MUST carry.
+# One row per resolved CallerCall outcome — mirrors CallerCallOutcome field-for-field.
+PARQUET_OUTCOME_REQUIRED_COLUMNS: frozenset[str] = frozenset(
+    {
+        "caller_id",
+        "call_event_time_ms",
+        "outcome_event_time_ms",
+        "asset",
+        "outcome_correct",
+    }
+)
+
+
+def _clean_outcome_store_path(raw: str | None) -> str | None:
+    """Return None for an unset/placeholder CALLER_OUTCOME_STORE_PATH, else the path.
+
+    Mirrors `aats.sentiment.adapters._clean_env_value`'s placeholder-detection
+    logic without importing that module (this module intentionally has no
+    dependency on adapters.py).  A `.env.example` placeholder is angle-bracketed
+    (e.g. `<path-to-labels-parquet-e.g. data/labels/caller_outcomes>`) and is
+    NEVER treated as a real path.
+    """
+    if raw is None:
+        return None
+    v = raw.strip()
+    if not v or (v.startswith("<") and v.endswith(">")):
+        return None
+    return v
+
+
+def _read_parquet_outcomes(path: str | None) -> list[CallerCallOutcome]:
+    """Read + validate the labels/ Parquet outcome dataset (T-401 clean-room harness).
+
+    NO NETWORK CALLS: local/mounted filesystem path only — a single .parquet
+    file or a directory of partitioned .parquet files (pandas.read_parquet
+    handles both transparently via the pyarrow engine).
+
+    NEVER RAISES for a missing/unset/unreadable/malformed dataset: returns []
+    (offline / no caller signal), matching the documented `.env.example`
+    fallback ("If unset or the file is absent, the scorer falls back to the
+    empty InMemoryCallerOutcomeStore").  A not-yet-populated labels/ dataset is
+    a legitimate bootstrap state, not an error — caller signals then default to
+    fully neutral (CallerSignal.caller_selectivity_modifier=1.0).
+
+    PIT SAFETY: rows that violate the CallerCallOutcome contract
+    (outcome_event_time_ms must be STRICTLY AFTER call_event_time_ms — see the
+    CallerCallOutcome docstring) are dropped and counted in a warning log — a
+    malformed/leaky row from the harness is never silently trusted.
+
+    CELL-LEVEL SAFETY: this also holds one level deeper than the file/schema
+    checks above — a single row with a null/NaN cell or a value that cannot
+    be cast to the expected type (e.g. a non-numeric timestamp) is dropped
+    individually; it can never crash the read for the rest of the dataset.
+    """
+    if not path:
+        logger.info(
+            "ParquetCallerOutcomeStore: no CALLER_OUTCOME_STORE_PATH configured "
+            "(offline mode) -- returning [] (neutral caller signal)."
+        )
+        return []
+
+    if not os.path.exists(path):
+        logger.info(
+            "ParquetCallerOutcomeStore: path %s does not exist (offline mode) -- "
+            "returning [] (neutral caller signal).",
+            path,
+        )
+        return []
+
+    try:
+        import pandas as pd  # lazy import: the ONLY place pandas is required by
+        # this module — a deployment that never configures
+        # CALLER_OUTCOME_STORE_PATH never needs pandas for caller_score.py.
+    except ImportError:
+        logger.warning(
+            "ParquetCallerOutcomeStore: pandas is not installed; cannot read %s. "
+            "Returning [] (neutral caller signal).",
+            path,
+        )
+        return []
+
+    try:
+        frame = pd.read_parquet(path)
+    except Exception as exc:  # noqa: BLE001 — any read failure => safe empty fallback
+        logger.warning(
+            "ParquetCallerOutcomeStore: failed to read %s (%s: %s). "
+            "Returning [] (neutral caller signal).",
+            path,
+            type(exc).__name__,
+            exc,
+        )
+        return []
+
+    missing_columns = PARQUET_OUTCOME_REQUIRED_COLUMNS - set(frame.columns)
+    if missing_columns:
+        logger.warning(
+            "ParquetCallerOutcomeStore: %s is missing required column(s) %s. "
+            "Returning [] (neutral caller signal) rather than guessing a schema.",
+            path,
+            sorted(missing_columns),
+        )
+        return []
+
+    outcomes: list[CallerCallOutcome] = []
+    dropped_pit_violations = 0
+    dropped_malformed = 0
+    for row in frame.to_dict("records"):
+        # STRICT per-row validation: a single corrupt/mistyped cell (NaN/null,
+        # a non-numeric string in a timestamp column, etc.) must NEVER crash
+        # the entire read -- only that one row is dropped, the rest of the
+        # dataset is still processed.  This is what makes the "never raises
+        # for a malformed dataset" guarantee hold at the CELL level, not just
+        # the file/schema level.
+        try:
+            raw_caller_id = row["caller_id"]
+            raw_asset = row["asset"]
+            raw_outcome_correct = row["outcome_correct"]
+            raw_call_t = row["call_event_time_ms"]
+            raw_outcome_t = row["outcome_event_time_ms"]
+            if any(
+                pd.isna(v)
+                for v in (raw_caller_id, raw_asset, raw_outcome_correct, raw_call_t, raw_outcome_t)
+            ):
+                raise ValueError("null/NaN cell in a required column")
+            call_event_time_ms = int(raw_call_t)
+            outcome_event_time_ms = int(raw_outcome_t)
+            caller_id = str(raw_caller_id)
+            asset = str(raw_asset)
+            outcome_correct = bool(raw_outcome_correct)
+        except (TypeError, ValueError) as exc:
+            dropped_malformed += 1
+            logger.debug(
+                "ParquetCallerOutcomeStore: dropped malformed row from %s (%s: %s): %r",
+                path,
+                type(exc).__name__,
+                exc,
+                row,
+            )
+            continue
+
+        if outcome_event_time_ms <= call_event_time_ms:
+            # Contract violation (CallerCallOutcome docstring): the outcome
+            # must resolve STRICTLY AFTER the call.  Drop -- never trust a
+            # malformed/leaky row from the harness.
+            dropped_pit_violations += 1
+            continue
+        outcomes.append(
+            CallerCallOutcome(
+                caller_id=caller_id,
+                call_event_time_ms=call_event_time_ms,
+                outcome_event_time_ms=outcome_event_time_ms,
+                asset=asset,
+                outcome_correct=outcome_correct,
+            )
+        )
+
+    if dropped_malformed:
+        logger.warning(
+            "ParquetCallerOutcomeStore: dropped %d malformed row(s) from %s "
+            "(null/NaN or non-castable cell in a required column) -- never "
+            "trusted, never crashed the read.",
+            dropped_malformed,
+            path,
+        )
+
+    if dropped_pit_violations:
+        logger.warning(
+            "ParquetCallerOutcomeStore: dropped %d row(s) from %s violating the "
+            "outcome_event_time_ms > call_event_time_ms contract.",
+            dropped_pit_violations,
+            path,
+        )
+
+    logger.info(
+        "ParquetCallerOutcomeStore: loaded %d outcome row(s) from %s.",
+        len(outcomes),
+        path,
+    )
+    return outcomes
+
+
+class ParquetCallerOutcomeStore:
+    """Production CallerOutcomeStore backend — reads the clean-room harness'
+    labels/ Parquet dataset (T-401) at CALLER_OUTCOME_STORE_PATH (EN5).
+
+    HONORS the CallerOutcomeStore Protocol EXACTLY — NO RELAXATION:
+      - get_outcomes(): the STRICT point-in-time filter
+        (outcome_event_time_ms <= as_of_ms) is re-applied on EVERY call using
+        the CALLER-SUPPLIED as_of_ms.  The raw rows are cached (see LAZY LOAD
+        below) but the PIT filter itself is never skipped, widened, or served
+        from a "latest"/wall-clock-anchored view.
+      - get_all_caller_ids(): only callers with >= 1 outcome RESOLVED
+        (outcome_event_time_ms <= as_of_ms) — mirrors
+        InMemoryCallerOutcomeStore exactly, so the two backends are
+        drop-in-interchangeable for CallerTrackRecordScorer.
+      - get_universe_accuracy(): returns DEFAULT_UNIVERSE_ACCURACY when no
+        rows resolve at as_of_ms — a sparse/empty/missing dataset is NEVER
+        used to inflate the universe prior.
+
+    NO WIN-RATE HEADLINE: this store exposes only per-outcome booleans
+    (`CallerCallOutcome.outcome_correct`).  The caller-vs-universe ACCURACY
+    DELTA is computed exclusively by CallerTrackRecordScorer /
+    `_compute_caller_score` — this class never aggregates or reports a raw
+    win/loss fraction itself.
+
+    NO NETWORK CALLS: reads a local/mounted filesystem Parquet path only
+    (a single file or a directory of partitioned files).  If the path is
+    unset, absent, or unreadable/malformed, this store behaves EXACTLY like
+    an empty InMemoryCallerOutcomeStore (returns [] / DEFAULT_UNIVERSE_ACCURACY)
+    — it NEVER raises for a missing/optional dataset (a not-yet-populated
+    labels/ harness is a legitimate bootstrap state) and NEVER fabricates data.
+
+    SCHEMA (one row per resolved CallerCall outcome — mirrors
+    CallerCallOutcome field-for-field):
+        caller_id               str
+        call_event_time_ms      int
+        outcome_event_time_ms   int   (must be STRICTLY > call_event_time_ms)
+        asset                   str
+        outcome_correct         bool
+
+    LAZY LOAD + CACHE: the raw rows are read from disk ONCE (on first access,
+    or eagerly if `preload=True`) and cached in memory; every query re-applies
+    the point-in-time filter against the CALLER-SUPPLIED as_of_ms, so caching
+    the raw rows is PIT-safe — nothing is ever filtered by wall-clock/"now".
+    Call `reload()` to force a re-read (e.g. after the clean-room harness
+    appends new labels).
+
+    USAGE:
+        store = ParquetCallerOutcomeStore.from_env()  # reads CALLER_OUTCOME_STORE_PATH
+        # or explicitly:
+        store = ParquetCallerOutcomeStore(path="data/labels/caller_outcomes")
+        scorer = CallerTrackRecordScorer(store)
+        signal = scorer.score_for_asset(mint, caller_ids, decision_time_ms)
+    """
+
+    def __init__(self, path: str | None, *, preload: bool = False) -> None:
+        self._path = path
+        self._rows: list[CallerCallOutcome] | None = None
+        if preload:
+            self._ensure_loaded()
+
+    @classmethod
+    def from_env(
+        cls,
+        env: dict[str, str] | None = None,
+        *,
+        preload: bool = False,
+    ) -> ParquetCallerOutcomeStore:
+        """Build from CALLER_OUTCOME_STORE_PATH (`.env.example` schema).
+
+        `env` is injectable for testing (defaults to `os.environ`).  An
+        unset/placeholder value yields a store with path=None, which behaves
+        identically to an empty InMemoryCallerOutcomeStore (fully neutral —
+        never an error).
+        """
+        src = env if env is not None else dict(os.environ)
+        path = _clean_outcome_store_path(src.get("CALLER_OUTCOME_STORE_PATH"))
+        return cls(path=path, preload=preload)
+
+    def reload(self) -> None:
+        """Force a re-read of the underlying Parquet path on the next query.
+
+        Use after the clean-room harness (T-401) appends new labels to pick
+        them up without reconstructing the store.
+        """
+        self._rows = None
+
+    def _ensure_loaded(self) -> list[CallerCallOutcome]:
+        if self._rows is None:
+            self._rows = _read_parquet_outcomes(self._path)
+        return self._rows
+
+    def get_outcomes(self, caller_id: str, as_of_ms: int) -> list[CallerCallOutcome]:
+        """Return outcomes for caller_id that are resolved at as_of_ms.
+
+        POINT-IN-TIME (STRICT, no relaxation): only rows with
+        outcome_event_time_ms <= as_of_ms are returned — re-filtered against
+        the caller-supplied as_of_ms on every call.
+        """
+        rows = self._ensure_loaded()
+        return [
+            o for o in rows
+            if o.caller_id == caller_id and o.outcome_event_time_ms <= as_of_ms
+        ]
+
+    def get_all_caller_ids(self, as_of_ms: int) -> list[str]:
+        """Return distinct caller IDs with >= 1 outcome resolved by as_of_ms."""
+        rows = self._ensure_loaded()
+        return list({o.caller_id for o in rows if o.outcome_event_time_ms <= as_of_ms})
+
+    def get_universe_accuracy(self, as_of_ms: int) -> float:
+        """Universe-level accuracy across ALL callers, resolved by as_of_ms.
+
+        Returns DEFAULT_UNIVERSE_ACCURACY when nothing has resolved yet — a
+        missing/sparse dataset is NEVER used to inflate the prior.
+        """
+        rows = self._ensure_loaded()
+        resolved = [o for o in rows if o.outcome_event_time_ms <= as_of_ms]
         if not resolved:
             return DEFAULT_UNIVERSE_ACCURACY
         correct = sum(1 for o in resolved if o.outcome_correct)

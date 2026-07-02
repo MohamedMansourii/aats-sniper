@@ -2021,6 +2021,16 @@ class PumpPortalTransport:
             )
             return None, None
 
+        # httpx/httpcore emit their OWN "HTTP Request: POST <url> ..." log
+        # line at INFO/DEBUG via the standard logging module -- and that
+        # line embeds the full URL, api-key included.  Silencing these
+        # library loggers is required (not optional) whenever self._rpc_url
+        # may carry a credential in its query string; a permissive
+        # root-logger config elsewhere in the app must never be able to
+        # leak it.
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
+
         payload = {
             "jsonrpc": "2.0",
             "id": next(_ws_rpc_id),
@@ -2040,11 +2050,23 @@ class PumpPortalTransport:
                 resp = await client.post(self._rpc_url, json=payload)
                 resp.raise_for_status()
                 data = resp.json()
-        except Exception as exc:  # noqa: BLE001
+        except httpx.HTTPStatusError as exc:
+            # exc / str(exc) embeds the full request URL -- self._rpc_url may
+            # carry an api-key query param (e.g. Helius).  Log ONLY the
+            # status code, NEVER the exception object or the URL.
             logger.debug(
-                "PumpPortalTransport._get_slot_time(%.16s…): RPC error: %s",
+                "PumpPortalTransport._get_slot_time(%.16s…): RPC HTTP %s",
                 signature,
-                exc,
+                exc.response.status_code,
+            )
+            return None, None
+        except Exception as exc:  # noqa: BLE001
+            # Some httpx exceptions (e.g. ConnectError, ReadTimeout) also
+            # stringify the request URL -- log only the exception type.
+            logger.debug(
+                "PumpPortalTransport._get_slot_time(%.16s…): RPC failed (%s)",
+                signature,
+                type(exc).__name__,
             )
             return None, None
 
