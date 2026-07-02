@@ -47,9 +47,14 @@ def _state(engine: ExitEngine, mint: str = "M") -> ExitState:
     return ExitState.at_entry(mint=mint, entry_fill_price=ENTRY, config=engine.config)
 
 
-def _tick(engine, state, mark, *, narrative=False, bt=BT):
+def _tick(engine, state, mark, *, narrative=False, insider=False, sellability=False, bt=BT):
     return engine.on_tick(
-        state, mark_price=mark, block_time_ms=bt, narrative_failure_flag=narrative
+        state,
+        mark_price=mark,
+        block_time_ms=bt,
+        narrative_failure_flag=narrative,
+        insider_dump_flag=insider,
+        sellability_degraded_flag=sellability,
     )
 
 
@@ -261,6 +266,259 @@ def test_narrative_failure_overrides_hard_stop_priority():
     st = _state(eng)
     d = _tick(eng, st, Decimal("50"), narrative=True)  # breaches stop AND flag set
     assert d.reason is ExitReason.NARRATIVE_FAILURE
+
+
+# --------------------------------------------------------------------------- #
+# E14b — insider / dev-sell dump auto-exit (catastrophic tier, de-risk only).
+# The FAST branch reads a PRE-SET bool (E14a produces it off the hot path); it
+# can ONLY force a full SECURE exit — never hold longer, widen a stop, or size up.
+# --------------------------------------------------------------------------- #
+
+
+def test_insider_dump_flag_forces_secure_full_exit_on_healthy_mark():
+    """With the pre-set insider_dump flag set, a fully HEALTHY mark (no stop, no TP)
+    is force-exited: full remainder, SECURE routing.  This is the mutation canary —
+    remove the branch and this HOLD-otherwise mark stops force-exiting (RED)."""
+    eng = _engine()
+    st = _state(eng)
+    d = _tick(eng, st, Decimal("100"), insider=True)  # mark == entry: would HOLD
+    assert d.reason is ExitReason.INSIDER_DUMP
+    assert isinstance(d.intent, ExitIntent)  # full flatten, never a ReduceIntent
+    assert d.fraction_bps == 10_000  # 100% of remaining
+    assert d.next_state.remaining_bps == 0
+    assert d.exit_mode is MevExitMode.SECURE  # defensive exit is always Secure
+    assert d.intent.exit_mode == "secure"
+
+
+def test_insider_dump_unset_is_no_change():
+    """With the flag UNSET, on_tick behaves exactly as before: a healthy mark holds,
+    a TP mark still scales out.  The new branch adds nothing when the flag is off."""
+    eng = _engine()
+    # Healthy mark, flag off -> HOLD (unchanged).
+    d_hold = _tick(eng, _state(eng), Decimal("100"), insider=False)
+    assert d_hold.reason is ExitReason.NONE
+    assert d_hold.intent is None
+    # TP mark, flag off -> TAKE_PROFIT (unchanged).
+    d_tp = _tick(eng, _state(eng), ENTRY * Decimal("1.5"), insider=False)
+    assert d_tp.reason is ExitReason.TAKE_PROFIT
+    assert isinstance(d_tp.intent, ReduceIntent)
+    # Identical to omitting the flag entirely (default False).
+    d_default = eng.on_tick(_state(eng), mark_price=Decimal("100"), block_time_ms=BT)
+    assert d_default.reason is ExitReason.NONE
+
+
+def test_insider_dump_overrides_hard_stop():
+    """On a stop breach AND insider_dump, the insider dump is reported (it sits
+    ABOVE the mechanical hard stop — exit ahead of the price collapse).  Removing
+    the branch would report HARD_STOP here, so this pins the ordering RED."""
+    eng = _engine()
+    st = _state(eng)
+    d = _tick(eng, st, Decimal("50"), insider=True)  # breaches -40% stop AND flag set
+    assert d.reason is ExitReason.INSIDER_DUMP
+    assert isinstance(d.intent, ExitIntent)
+    assert d.exit_mode is MevExitMode.SECURE
+
+
+def test_insider_dump_overrides_take_profit():
+    """A TP-rung mark with the insider flag set force-exits (INSIDER_DUMP), never
+    books a partial gain (TAKE_PROFIT) — the catastrophic tier wins."""
+    eng = _engine()
+    d = _tick(eng, _state(eng), ENTRY * Decimal("6"), insider=True)  # 6x -> TP rung
+    assert d.reason is ExitReason.INSIDER_DUMP
+    assert isinstance(d.intent, ExitIntent)
+    assert d.fraction_bps == 10_000
+
+
+def test_insider_dump_overrides_ratchet_stop():
+    """A give-back to the locked profit floor (RATCHET_STOP without the flag) is
+    reported as INSIDER_DUMP when the flag is set — insider dump > ratchet."""
+    eng = _engine()
+    st = _state(eng)
+    st = _tick(eng, st, ENTRY * Decimal("3.0")).next_state  # peak 3x -> locked floor 2.0x
+    assert st.locked_floor_r == Decimal("2.0")
+    # Control: without the flag, a fall to the locked floor fires the ratchet stop.
+    d_ratchet = _tick(eng, st, ENTRY * Decimal("2.0"))
+    assert d_ratchet.reason is ExitReason.RATCHET_STOP
+    # With the flag, the SAME tick is an insider-dump exit instead.
+    d_insider = _tick(eng, st, ENTRY * Decimal("2.0"), insider=True)
+    assert d_insider.reason is ExitReason.INSIDER_DUMP
+    assert d_insider.exit_mode is MevExitMode.SECURE
+
+
+def test_insider_dump_overrides_trailing_stop():
+    """A drawdown from the peak that would fire the TRAILING_STOP is reported as
+    INSIDER_DUMP when the flag is set — insider dump > trailing."""
+    eng = _engine()
+    st = _state(eng)
+    st = _tick(eng, st, ENTRY * Decimal("2.0")).next_state  # arm
+    st = _tick(eng, st, ENTRY * Decimal("4.0")).next_state  # peak 4x -> floor 2.8x
+    # Control: a fall to 2.5x (< 2.8x floor) fires the trailing stop.
+    d_trail = _tick(eng, st, ENTRY * Decimal("2.5"))
+    assert d_trail.reason is ExitReason.TRAILING_STOP
+    # With the flag, the SAME tick is an insider-dump exit instead.
+    d_insider = _tick(eng, st, ENTRY * Decimal("2.5"), insider=True)
+    assert d_insider.reason is ExitReason.INSIDER_DUMP
+
+
+def test_insider_dump_overrides_timeout():
+    """At the exact tick the max-hold TIMEOUT would fire, the insider flag wins —
+    insider dump > timeout.  Both are evaluated from the SAME pre-timeout state
+    (on_tick is pure), isolating the ordering."""
+    eng = _engine()
+    st = _state(eng)
+    for _ in range(eng.config.max_hold_steps - 1):
+        st = _tick(eng, st, ENTRY * Decimal("1.1")).next_state
+    assert st.steps_held == eng.config.max_hold_steps - 1
+    d_timeout = _tick(eng, st, ENTRY * Decimal("1.1"))  # next tick times out
+    assert d_timeout.reason is ExitReason.TIMEOUT
+    d_insider = _tick(eng, st, ENTRY * Decimal("1.1"), insider=True)
+    assert d_insider.reason is ExitReason.INSIDER_DUMP
+
+
+def test_narrative_failure_outranks_insider_dump():
+    """narrative_failure remains the single HIGHEST rule (charter iii).  When BOTH
+    catastrophic flags are set, narrative_failure is reported."""
+    eng = _engine()
+    d = _tick(eng, _state(eng), Decimal("100"), narrative=True, insider=True)
+    assert d.reason is ExitReason.NARRATIVE_FAILURE
+
+
+# --------------------------------------------------------------------------- #
+# E17 — delayed-honeypot / tax-flip sellability re-probe auto-exit (catastrophic
+# tier, de-risk only).  The FAST branch reads a PRE-SET bool (the SLOW-loop
+# re-probe produces it off the hot path by re-running the SHARED sell-sim); it can
+# ONLY force a full SECURE exit — never hold longer, widen a stop, or size up.
+# --------------------------------------------------------------------------- #
+
+
+def test_sellability_degraded_forces_secure_full_exit_on_healthy_mark():
+    """With the pre-set sellability_degraded flag, a fully HEALTHY mark (no stop, no
+    TP) is force-exited: full remainder, SECURE routing.  This is the mutation
+    canary — remove the branch and this HOLD-otherwise mark stops force-exiting."""
+    eng = _engine()
+    st = _state(eng)
+    d = _tick(eng, st, Decimal("100"), sellability=True)  # mark == entry: would HOLD
+    assert d.reason is ExitReason.SELLABILITY_DEGRADED
+    assert isinstance(d.intent, ExitIntent)  # full flatten, never a ReduceIntent
+    assert d.fraction_bps == 10_000  # 100% of remaining
+    assert d.next_state.remaining_bps == 0
+    assert d.exit_mode is MevExitMode.SECURE  # exit while an exit is still possible
+    assert d.intent.exit_mode == "secure"
+
+
+def test_sellability_degraded_unset_is_no_change():
+    """With the flag UNSET, on_tick behaves exactly as before: a healthy mark holds,
+    a TP mark still scales out.  The new branch adds nothing when the flag is off."""
+    eng = _engine()
+    d_hold = _tick(eng, _state(eng), Decimal("100"), sellability=False)
+    assert d_hold.reason is ExitReason.NONE
+    assert d_hold.intent is None
+    d_tp = _tick(eng, _state(eng), ENTRY * Decimal("1.5"), sellability=False)
+    assert d_tp.reason is ExitReason.TAKE_PROFIT
+    assert isinstance(d_tp.intent, ReduceIntent)
+
+
+def test_sellability_degraded_overrides_hard_stop():
+    """On a stop breach AND sellability_degraded, the sellability exit is reported
+    (it sits ABOVE the mechanical hard stop — exit on the sellability signal, not
+    after the price collapse).  Removing the branch would report HARD_STOP here."""
+    eng = _engine()
+    d = _tick(eng, _state(eng), Decimal("50"), sellability=True)  # breaches -40% stop
+    assert d.reason is ExitReason.SELLABILITY_DEGRADED
+    assert isinstance(d.intent, ExitIntent)
+    assert d.exit_mode is MevExitMode.SECURE
+
+
+def test_sellability_degraded_overrides_take_profit():
+    """A TP-rung mark with the sellability flag set force-exits, never books a
+    partial gain — the catastrophic tier wins."""
+    eng = _engine()
+    d = _tick(eng, _state(eng), ENTRY * Decimal("6"), sellability=True)  # 6x -> TP rung
+    assert d.reason is ExitReason.SELLABILITY_DEGRADED
+    assert isinstance(d.intent, ExitIntent)
+    assert d.fraction_bps == 10_000
+
+
+def test_insider_dump_outranks_sellability_degraded():
+    """insider_dump (rug-in-progress) sits ABOVE sellability_degraded.  When BOTH
+    are set, insider_dump is reported — pins the ordering RED under a swap."""
+    eng = _engine()
+    d = _tick(eng, _state(eng), Decimal("100"), insider=True, sellability=True)
+    assert d.reason is ExitReason.INSIDER_DUMP
+
+
+def test_narrative_failure_outranks_sellability_degraded():
+    """narrative_failure remains the single HIGHEST rule even against sellability."""
+    eng = _engine()
+    d = _tick(eng, _state(eng), Decimal("100"), narrative=True, sellability=True)
+    assert d.reason is ExitReason.NARRATIVE_FAILURE
+
+
+def test_sellability_degraded_flag_must_be_plain_bool():
+    """The sellability input is a plain PRE-SET bool (mirrors narrative/insider) —
+    a truthy int is refused so the FAST branch can never be fed a non-bool."""
+    eng = _engine()
+    with pytest.raises(TypeError):
+        eng.on_tick(
+            _state(eng),
+            mark_price=Decimal("100"),
+            block_time_ms=BT,
+            sellability_degraded_flag=1,  # type: ignore[arg-type]
+        )
+
+
+def test_sellability_degraded_secure_even_on_fast_preset():
+    """Like every defensive exit, a sellability exit routes SECURE even on a Fast
+    preset — an exit-while-you-still-can is never sandwiched on the way out."""
+    eng = ExitEngine(config=preset("fast_balanced"))
+    assert eng.config.default_exit_mode is MevExitMode.FAST
+    d = _tick(eng, _state(eng), Decimal("100"), sellability=True)
+    assert d.reason is ExitReason.SELLABILITY_DEGRADED
+    assert d.exit_mode is MevExitMode.SECURE
+    assert d.intent.exit_mode == "secure"
+
+
+def test_sellability_degraded_is_de_risk_only():
+    """The sellability branch only ever sheds risk: remaining never grows and the
+    intent is a bounded full flatten (never an add)."""
+    eng = _engine()
+    st = _state(eng)
+    d = _tick(eng, st, Decimal("120"), sellability=True)
+    assert d.next_state.remaining_bps <= st.remaining_bps
+    assert isinstance(d.intent, ExitIntent)
+    assert 1 <= d.intent.fraction_bps <= 10_000
+
+
+def test_insider_dump_flag_must_be_plain_bool():
+    """The insider input is a plain PRE-SET bool (mirrors narrative_failure) — a
+    truthy int is refused so the FAST branch can never be fed a non-bool signal."""
+    eng = _engine()
+    with pytest.raises(TypeError):
+        eng.on_tick(
+            _state(eng), mark_price=Decimal("100"), block_time_ms=BT, insider_dump_flag=1
+        )  # type: ignore[arg-type]
+
+
+def test_insider_dump_defensive_exit_secure_even_on_fast_preset():
+    """Like every defensive exit, an insider-dump exit routes SECURE even on a Fast
+    preset — a rug-in-progress exit is never sandwiched on the way out."""
+    eng = ExitEngine(config=preset("fast_balanced"))
+    assert eng.config.default_exit_mode is MevExitMode.FAST
+    d = _tick(eng, _state(eng), Decimal("100"), insider=True)
+    assert d.reason is ExitReason.INSIDER_DUMP
+    assert d.exit_mode is MevExitMode.SECURE
+    assert d.intent.exit_mode == "secure"
+
+
+def test_insider_dump_is_de_risk_only():
+    """The insider-dump branch only ever sheds risk: remaining never grows and the
+    intent is a bounded full flatten (never an add)."""
+    eng = _engine()
+    st = _state(eng)
+    d = _tick(eng, st, Decimal("120"), insider=True)
+    assert d.next_state.remaining_bps <= st.remaining_bps  # never grows
+    assert isinstance(d.intent, ExitIntent)
+    assert 1 <= d.intent.fraction_bps <= 10_000
 
 
 # --------------------------------------------------------------------------- #

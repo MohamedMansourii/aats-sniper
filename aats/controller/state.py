@@ -15,6 +15,24 @@ Key conventions (data-models.md §9):
   heartbeat:fast_loop  -> last FAST-loop heartbeat timestamp (ms, event-time)
   breaker:state        -> JSON-serialized BreakerState
   narrative:{mint}     -> "1" if SLOW-loop narrative_failure flag is set
+  insider_dump:{mint}  -> "1" (+ fraction_sold_bps/event_slot payload) if M1
+                          ingestion (aats.ingestion.insider_dump, E14a) detected
+                          creator/dev-wallet or tracked top-holder-cluster
+                          distribution crossing the configured cumulative-sold
+                          threshold on an OPEN position.  Mirrors narrative:{mint}
+                          exactly (same TTL-based presence semantics); the FAST
+                          exit branch (E14b) reads ONLY the bare bool via
+                          get_insider_dump_flag() — never the payload.
+  sellability_degraded:{mint}
+                       -> "1" (+ reason/event_slot payload) if the SLOW-loop
+                          sellability RE-PROBE (aats.risk.sellability_reprobe, E17)
+                          re-ran the SHARED sell-sim on an OPEN position and got a
+                          DEGRADED (delayed-honeypot / tax-flip) or INCONCLUSIVE
+                          (refuse-by-default => degraded) result.  Mirrors
+                          insider_dump:{mint} exactly (same TTL-based presence
+                          semantics, no new storage pattern, no frozen contract);
+                          the FAST exit branch (E17) reads ONLY the bare bool via
+                          get_sellability_degraded_flag() — never the payload.
 
 ATOMIC SNIPE->FAST HANDOFF (ADR-0007):
   The fsm_lock:{mint} key is written atomically (SETNX / NX flag) with the
@@ -122,6 +140,110 @@ class StateStore(Protocol):
         """SLOW loop sets the catastrophic-exit flag."""
         ...
 
+    # --- Insider-dump flag (E14a: M1 ingestion writes, FAST reads bool) ---
+    #
+    # Mirrors the narrative_failure_flag mechanism EXACTLY (same TTL-based
+    # presence semantics — no new frozen contract, no new storage pattern).
+    # Detection lives OFF the hot path in aats.ingestion.insider_dump
+    # (enrichment tier); this StateStore method is the ONLY place the
+    # detection result is persisted.  The FAST exit branch (E14b,
+    # risk-guardrails-engineer) reads get_insider_dump_flag() — a bare bool,
+    # zero computation — exactly like get_narrative_failure_flag().
+
+    def get_insider_dump_flag(self, mint: str) -> bool:
+        """Return True iff an insider-dump flag is currently set (unexpired).
+
+        PRE-SET boolean read for the FAST exit branch — same TTL-expiry
+        semantics as get_narrative_failure_flag().  De-risk only: reading
+        True can only cause a caller to de-risk; there is no path back to
+        False except natural TTL expiry (mirrors narrative_failure — no
+        explicit clear method either).
+        """
+        ...
+
+    def set_insider_dump_flag(
+        self,
+        mint: str,
+        *,
+        fraction_sold_bps: int,
+        event_slot: int,
+        ttl_seconds: int = 120,
+    ) -> None:
+        """M1 (aats.ingestion.insider_dump.InsiderDumpDetector) sets the flag.
+
+        Carries the detection PAYLOAD (fraction_sold_bps, event_slot) alongside
+        the boolean presence flag so SLOW-loop / audit / dashboard consumers can
+        read WHY it fired via get_insider_dump_detail().  The FAST exit branch
+        NEVER reads the payload directly — only the bare bool.
+
+        fraction_sold_bps: cumulative sold fraction of the wallet's/cluster's
+            held-supply baseline, in bps [0, 10000], AT THE MOMENT the
+            threshold was crossed (event-time — never wall-clock).
+        event_slot: the on-chain slot of the sell that crossed the threshold
+            (T-300a: event-time only).
+        """
+        ...
+
+    def get_insider_dump_detail(self, mint: str) -> tuple[int, int] | None:
+        """Return (fraction_sold_bps, event_slot) if the flag is set (unexpired).
+
+        None if absent/expired.  SLOW-loop / audit / dashboard use ONLY — the
+        FAST exit branch must never call this (its return type is not a bare
+        bool and reading it must never enter the hot path).
+        """
+        ...
+
+    # --- Sellability-degraded flag (E17: SLOW re-probe writes, FAST reads bool) ---
+    #
+    # Mirrors the insider_dump_flag mechanism EXACTLY (same TTL-based presence
+    # semantics — no new frozen contract, no new storage pattern).  The delayed-
+    # honeypot / tax-flip DETECTION lives OFF the hot path in
+    # aats.risk.sellability_reprobe (SLOW / N+2 tier), which RE-RUNS the SHARED
+    # sell-sim (aats.execution.sell_sim) on open positions; this StateStore method
+    # is the ONLY place that re-probe result is persisted.  The FAST exit branch
+    # (E17) reads get_sellability_degraded_flag() — a bare bool, zero computation,
+    # no RPC, no sell-sim — exactly like get_insider_dump_flag().  De-risk only:
+    # reading True can only cause a caller to de-risk (force-exit SECURE); there
+    # is no path back to False except natural TTL expiry.
+
+    def get_sellability_degraded_flag(self, mint: str) -> bool:
+        """Return True iff a sellability-degraded flag is currently set (unexpired).
+
+        PRE-SET boolean read for the FAST exit branch — same TTL-expiry semantics
+        as get_insider_dump_flag().  De-risk only: reading True can only cause a
+        caller to force-exit; there is no explicit clear (mirrors insider_dump).
+        """
+        ...
+
+    def set_sellability_degraded_flag(
+        self,
+        mint: str,
+        *,
+        reason: str,
+        event_slot: int,
+        ttl_seconds: int = 120,
+    ) -> None:
+        """The SLOW re-probe (aats.risk.sellability_reprobe.SellabilityReprober)
+        sets the flag when the shared sell-sim re-probe on an OPEN position is
+        DEGRADED or INCONCLUSIVE (refuse-by-default => degraded).
+
+        Carries the machine `reason` (a SellabilityReprobeReason value, e.g.
+        "degraded_sim_revert") and the on-chain `event_slot` (T-300a: event-time
+        only — never wall-clock) alongside the boolean presence flag so SLOW-loop /
+        audit / dashboard consumers can read WHY it fired via
+        get_sellability_degraded_detail().  The FAST exit branch NEVER reads the
+        payload directly — only the bare bool.
+        """
+        ...
+
+    def get_sellability_degraded_detail(self, mint: str) -> tuple[str, int] | None:
+        """Return (reason, event_slot) if the flag is set (unexpired), else None.
+
+        SLOW-loop / audit / dashboard use ONLY — the FAST exit branch must never
+        call this (its return type is not a bare bool).
+        """
+        ...
+
     # --- Per-mint cooldown ---
 
     def set_cooldown(self, mint: str, ttl_seconds: int) -> None:
@@ -203,6 +325,10 @@ class InMemoryStateStore:
         self._veto_flags: dict[str, int] = {}
         # {mint: expiry_ms}
         self._narrative_flags: dict[str, int] = {}
+        # {mint: (fraction_sold_bps, event_slot, expiry_ms)}  (E14a)
+        self._insider_dump_flags: dict[str, tuple[int, int, int]] = {}
+        # {mint: (reason, event_slot, expiry_ms)}  (E17 sellability re-probe)
+        self._sellability_degraded_flags: dict[str, tuple[str, int, int]] = {}
         # {mint: expiry_ms}
         self._cooldowns: dict[str, int] = {}
         # {intent_id: expiry_ms}
@@ -309,6 +435,110 @@ class InMemoryStateStore:
     def set_narrative_failure_flag(self, mint: str, ttl_seconds: int = 120) -> None:
         with self._lock:
             self._narrative_flags[mint] = self._now() + ttl_seconds * 1_000
+
+    # --- Insider-dump flag (E14a) ---
+
+    def get_insider_dump_flag(self, mint: str) -> bool:
+        with self._lock:
+            entry = self._insider_dump_flags.get(mint)
+            if entry is None:
+                return False
+            _frac, _slot, expiry = entry
+            if self._is_expired(expiry):
+                del self._insider_dump_flags[mint]
+                return False
+            return True
+
+    def set_insider_dump_flag(
+        self,
+        mint: str,
+        *,
+        fraction_sold_bps: int,
+        event_slot: int,
+        ttl_seconds: int = 120,
+    ) -> None:
+        if isinstance(fraction_sold_bps, bool) or not isinstance(fraction_sold_bps, int):
+            raise TypeError(
+                "set_insider_dump_flag: fraction_sold_bps must be int (bps), not "
+                f"{type(fraction_sold_bps).__name__}."
+            )
+        if not (0 <= fraction_sold_bps <= 10_000):
+            raise ValueError(
+                f"set_insider_dump_flag: fraction_sold_bps must be in [0, 10000], "
+                f"got {fraction_sold_bps}."
+            )
+        if isinstance(event_slot, bool) or not isinstance(event_slot, int):
+            raise TypeError(
+                "set_insider_dump_flag: event_slot must be int (on-chain slot), not "
+                f"{type(event_slot).__name__}."
+            )
+        if event_slot < 0:
+            raise ValueError(f"set_insider_dump_flag: event_slot must be >= 0, got {event_slot}.")
+        with self._lock:
+            expiry = self._now() + ttl_seconds * 1_000
+            self._insider_dump_flags[mint] = (fraction_sold_bps, event_slot, expiry)
+
+    def get_insider_dump_detail(self, mint: str) -> tuple[int, int] | None:
+        with self._lock:
+            entry = self._insider_dump_flags.get(mint)
+            if entry is None:
+                return None
+            frac, slot, expiry = entry
+            if self._is_expired(expiry):
+                del self._insider_dump_flags[mint]
+                return None
+            return (frac, slot)
+
+    # --- Sellability-degraded flag (E17) ---
+
+    def get_sellability_degraded_flag(self, mint: str) -> bool:
+        with self._lock:
+            entry = self._sellability_degraded_flags.get(mint)
+            if entry is None:
+                return False
+            _reason, _slot, expiry = entry
+            if self._is_expired(expiry):
+                del self._sellability_degraded_flags[mint]
+                return False
+            return True
+
+    def set_sellability_degraded_flag(
+        self,
+        mint: str,
+        *,
+        reason: str,
+        event_slot: int,
+        ttl_seconds: int = 120,
+    ) -> None:
+        if not isinstance(reason, str) or not reason:
+            raise ValueError(
+                "set_sellability_degraded_flag: reason must be a non-empty str "
+                "(a machine SellabilityReprobeReason value), got "
+                f"{type(reason).__name__}={reason!r}."
+            )
+        if isinstance(event_slot, bool) or not isinstance(event_slot, int):
+            raise TypeError(
+                "set_sellability_degraded_flag: event_slot must be int (on-chain slot), not "
+                f"{type(event_slot).__name__}."
+            )
+        if event_slot < 0:
+            raise ValueError(
+                f"set_sellability_degraded_flag: event_slot must be >= 0, got {event_slot}."
+            )
+        with self._lock:
+            expiry = self._now() + ttl_seconds * 1_000
+            self._sellability_degraded_flags[mint] = (reason, event_slot, expiry)
+
+    def get_sellability_degraded_detail(self, mint: str) -> tuple[str, int] | None:
+        with self._lock:
+            entry = self._sellability_degraded_flags.get(mint)
+            if entry is None:
+                return None
+            reason, slot, expiry = entry
+            if self._is_expired(expiry):
+                del self._sellability_degraded_flags[mint]
+                return None
+            return (reason, slot)
 
     # --- Per-mint cooldown ---
 

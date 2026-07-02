@@ -344,6 +344,19 @@ class FastLoop:
             # This is the ONLY LLM-derived input and it can ONLY force an exit (de-risk).
             narrative_failure = self._store.get_narrative_failure_flag(mint)
 
+            # --- Insider/dev-sell dump flag check (E14b; PRE-SET off-hot-path by E14a) ---
+            # A bare bool read — zero computation, no RPC, no LLM — exactly like the
+            # narrative flag above.  It can ONLY force an exit (de-risk): a creator/
+            # top-holder distribution past threshold is a rug-in-progress.
+            insider_dump = self._store.get_insider_dump_flag(mint)
+
+            # --- Delayed-honeypot / tax-flip sellability flag (E17; PRE-SET off-hot-path) ---
+            # A bare bool read — zero computation, no RPC, no sell-sim — exactly like
+            # the two flags above.  It can ONLY force an exit (de-risk): the SLOW-loop
+            # sell-sim re-probe found the token may have flipped into a honeypot after
+            # entry, so we exit SECURE while an exit is still possible.
+            sellability_degraded = self._store.get_sellability_degraded_flag(mint)
+
             # --- ExitEngine evaluation (PURE function — no IO, no LLM, no network) ---
             exit_state = self._exit_states.get(mint)
             if exit_state is None:
@@ -355,6 +368,8 @@ class FastLoop:
                 mark_price=mark,
                 block_time_ms=block_time_ms,
                 narrative_failure_flag=narrative_failure,
+                insider_dump_flag=insider_dump,
+                sellability_degraded_flag=sellability_degraded,
             )
 
             # Update the exit state for the next tick (pure fold)

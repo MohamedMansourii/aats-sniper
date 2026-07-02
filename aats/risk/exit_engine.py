@@ -54,6 +54,20 @@ NON-WAIVABLE LAWS (encoded as types/structure, asserted in tests)
     is the stop / narrative / timeout path, never a TP rung.
   * The LLM is NEVER on this path; a catastrophic exit arrives ONLY as a pre-set
     `narrative_failure` flag the engine reads (it never calls an LLM).
+  * The insider/dev-sell DUMP exit (E14b) arrives the SAME asymmetric, off-hot-path
+    way: a pre-set `insider_dump` flag produced by E14a (on-chain creator/top-holder
+    distribution detection in `aats.ingestion.insider_dump`, persisted via
+    `StateStore.set_insider_dump_flag`).  The FAST branch only READS the bool — no
+    detection, RPC, or LLM here — and it can ONLY force an exit (de-risk); it can
+    never hold longer, widen/relax a stop, or size up.
+  * The DELAYED-HONEYPOT / TAX-FLIP sellability exit (E17) arrives the SAME
+    asymmetric, off-hot-path way: a pre-set `sellability_degraded` flag produced by
+    the SLOW-loop re-probe (`aats.risk.sellability_reprobe`), which RE-RUNS the
+    SHARED sell-sim (`aats.execution.sell_sim`) on open positions and persists a
+    DEGRADED / INCONCLUSIVE (refuse-by-default) result via
+    `StateStore.set_sellability_degraded_flag`.  The FAST branch only READS the bool
+    — no sell-sim, RPC, or detection here — and it can ONLY force an exit (de-risk);
+    it can never hold longer, widen/relax a stop, or size up.
   * Money is integer lamports / Decimal price.  Float is rejected at the boundary.
   * DRY-RUN: this module decides only; the venue handoff is behind the DRY_RUN
     gate.  The `paper_walk` simulator below NEVER touches a network.
@@ -683,6 +697,8 @@ class ExitReason(StrEnum):
 
     NONE = "none"  # hold
     NARRATIVE_FAILURE = "narrative_failure"  # (iii) LLM catastrophic exit (highest)
+    INSIDER_DUMP = "insider_dump"  # (iii') insider/dev-sell dump — catastrophic exit
+    SELLABILITY_DEGRADED = "sellability_degraded"  # (iii'') delayed-honeypot/tax-flip re-probe
     HARD_STOP = "hard_stop"  # (i)  fixed-at-entry stop breach
     RATCHET_STOP = "ratchet_stop"  # profit-lock ratchet floor breach (de-risk)
     TRAILING_STOP = "trailing_stop"  # trailing floor breach (de-risk, full remainder)
@@ -742,6 +758,8 @@ class ExitEngine:
 
     PRIORITY (same as rule_engine, highest-first, short-circuit):
         (iii) narrative_failure       -> FULL exit of remainder (SECURE)     [highest]
+        (iii')insider/dev-sell dump   -> FULL exit of remainder (SECURE) [rug-in-progress]
+        (iii'')sellability degraded   -> FULL exit of remainder (SECURE) [delayed honeypot]
         (i)   hard stop breach        -> FULL exit of remainder (SECURE)
         (i'') profit-lock ratchet     -> FULL exit of remainder (SECURE) [locked floor]
         (i')  trailing breach         -> FULL exit of remainder (SECURE) [de-risk runner]
@@ -759,9 +777,26 @@ class ExitEngine:
     de-risk: a position flat for N EVENT-TIME hours whose narrative has cooled is a
     dead bag and is force-exited (SECURE).  Disabled unless the config opts in.
 
-    A forced/defensive exit (narrative / hard-stop / trailing / timeout) ALWAYS
-    routes SECURE (private) so a defensive exit is never sandwiched.  Only the
-    gain-booking TP scale-out uses the config's routing.
+    The insider/dev-sell DUMP exit (iii', E14b) sits in the top catastrophic tier,
+    just BELOW narrative_failure and ABOVE the mechanical hard stop: an on-chain
+    creator/top-holder distribution past threshold is a rug-in-progress that must
+    pre-empt the price-based stop (you want out on the dev-dump signal before the
+    price fully collapses).  It reads a PRE-SET bool produced OFF the hot path by
+    E14a — the FAST branch runs no detection, RPC, or LLM — and can ONLY force a
+    full SECURE exit; it can never hold longer, widen/relax a stop, or size up.
+
+    The DELAYED-HONEYPOT / TAX-FLIP sellability exit (iii'', E17) sits just BELOW
+    the insider-dump signal and ABOVE the mechanical hard stop: a token that passed
+    the pre-trade sellability gate at entry can be flipped into a honeypot afterward
+    (freeze-authority abuse, transfer-fee/tax spike, LP pull, account-close trap).
+    The SLOW-loop re-probe re-runs the SHARED sell-sim on open positions and, on a
+    degraded/inconclusive result, pre-sets the bool this branch reads.  Like the
+    other catastrophic flags the FAST branch runs no sell-sim/RPC/detection and can
+    ONLY force a full SECURE exit — exit while an exit is still possible.
+
+    A forced/defensive exit (narrative / insider-dump / hard-stop / trailing /
+    timeout) ALWAYS routes SECURE (private) so a defensive exit is never
+    sandwiched.  Only the gain-booking TP scale-out uses the config's routing.
     """
 
     def __init__(self, *, config: ExitConfig, factory: DeRiskIntentFactory | None = None) -> None:
@@ -777,6 +812,8 @@ class ExitEngine:
         mark_price: Decimal | int | str,
         block_time_ms: int,
         narrative_failure_flag: bool = False,
+        insider_dump_flag: bool = False,
+        sellability_degraded_flag: bool = False,
         narrative_score: Decimal | int | str | None = None,
     ) -> ExitDecision:
         """Evaluate the ordered hierarchy for one open position at one tick.
@@ -793,6 +830,29 @@ class ExitEngine:
         this tick"; the time-stop then cannot fire (fail-safe: a missing cool
         signal never forces an exit, it just holds).  The score is used ONLY to
         DE-RISK (force a stale-bag exit); it can never size up or extend a hold.
+
+        `insider_dump_flag` (E14b) is a PRE-SET boolean produced OFF the hot path by
+        E14a's on-chain insider/dev-sell distribution detector
+        (`aats.ingestion.insider_dump`), read from the shared StateStore by the
+        caller (`StateStore.get_insider_dump_flag(mint)`) exactly as
+        `narrative_failure_flag` is.  The FAST branch only READS the bool — it runs
+        NO detection, RPC, or LLM here.  Like narrative_failure it can ONLY force a
+        full SECURE exit (de-risk); there is no path by which it holds longer,
+        widens/relaxes a stop, or sizes up.
+
+        `sellability_degraded_flag` (E17) is a PRE-SET boolean produced OFF the hot
+        path by the SLOW-loop sellability RE-PROBE
+        (`aats.risk.sellability_reprobe.SellabilityReprober`), which periodically
+        RE-RUNS the SHARED sell-sim (`aats.execution.sell_sim`) on OPEN positions
+        and, on a DEGRADED (sim-revert / zero-output / high sell-tax / account-close
+        trap) or INCONCLUSIVE (refuse-by-default => degraded) result, writes
+        `StateStore.set_sellability_degraded_flag`.  The caller reads
+        `StateStore.get_sellability_degraded_flag(mint)` — a bare bool — exactly like
+        the two flags above.  The FAST branch only READS the bool; it runs NO
+        sell-sim, RPC, or detection here.  A delayed honeypot / tax-flip means the
+        token may have become unsellable AFTER entry: like the other catastrophic
+        flags it can ONLY force a full SECURE exit (exit while an exit is still
+        possible) — never hold longer, widen/relax a stop, or size up.
         """
         if isinstance(block_time_ms, bool | float):
             raise TypeError("block_time_ms must be int (event-time ms), not float/bool.")
@@ -800,6 +860,12 @@ class ExitEngine:
             raise ValueError("block_time_ms must be non-negative (event-time).")
         if not isinstance(narrative_failure_flag, bool):
             raise TypeError("narrative_failure_flag must be a plain bool (a pre-set de-risk flag).")
+        if not isinstance(insider_dump_flag, bool):
+            raise TypeError("insider_dump_flag must be a plain bool (a pre-set de-risk flag).")
+        if not isinstance(sellability_degraded_flag, bool):
+            raise TypeError(
+                "sellability_degraded_flag must be a plain bool (a pre-set de-risk flag)."
+            )
         narr_score = self._coerce_narrative_score(narrative_score)
 
         mark = _to_decimal_price(mark_price, "mark_price")
@@ -840,6 +906,50 @@ class ExitEngine:
                 reason=ExitReason.NARRATIVE_FAILURE,
                 detail="SLOW-loop reasoner forced a catastrophic exit "
                 "(manufactured/abandoned sentiment)",
+            )
+
+        # (iii') INSIDER / DEV-SELL DUMP catastrophic exit (E14b).  Reads a PRE-SET
+        # flag produced OFF the hot path by E14a (`aats.ingestion.insider_dump` ->
+        # `StateStore.set_insider_dump_flag`); the FAST branch NEVER runs detection,
+        # an RPC, or an LLM here — it reads a plain bool exactly like the narrative
+        # flag above.  A creator/top-holder-cluster wallet dumping its held-supply
+        # baseline past the configured threshold is a rug-in-progress: force a FULL
+        # flatten of the remainder (SECURE) and short-circuit.  Placed just below
+        # narrative_failure and ABOVE the mechanical hard stop so a dev-dump exits
+        # ahead of the price collapse.  De-risk only — like narrative_failure it can
+        # ONLY force an exit; it can never hold longer, widen/relax a stop, or size up.
+        if insider_dump_flag:
+            return self._full_exit(
+                stepped,
+                block_time_ms=block_time_ms,
+                reason=ExitReason.INSIDER_DUMP,
+                detail="insider/dev-sell dump flag pre-set off-hot-path "
+                "(creator/top-holder distribution crossed threshold); rug-in-progress",
+            )
+
+        # (iii'') DELAYED-HONEYPOT / TAX-FLIP SELLABILITY DEGRADATION (E17).  Reads
+        # a PRE-SET flag produced OFF the hot path by the SLOW-loop sellability
+        # re-probe (`aats.risk.sellability_reprobe` -> `StateStore.
+        # set_sellability_degraded_flag`), which periodically RE-RUNS the SHARED
+        # sell-sim on open positions; the FAST branch NEVER runs a sell-sim, an RPC,
+        # or detection here — it reads a plain bool exactly like the two flags above.
+        # A degraded re-probe (sim-revert / zero-output / high sell-tax / account-
+        # close trap) OR an inconclusive one (refuse-by-default => degraded) means
+        # the token may have flipped into a honeypot AFTER entry: force a FULL
+        # flatten of the remainder (SECURE) while an exit is still possible, and
+        # short-circuit.  Placed in the catastrophic tier just below the insider-dump
+        # rug-in-progress signal and ABOVE the mechanical hard stop (a freshly-locked
+        # honeypot must be exited on the sellability signal, not after the price
+        # collapse).  De-risk only — like the flags above it can ONLY force an exit;
+        # it can never hold longer, widen/relax a stop, or size up.
+        if sellability_degraded_flag:
+            return self._full_exit(
+                stepped,
+                block_time_ms=block_time_ms,
+                reason=ExitReason.SELLABILITY_DEGRADED,
+                detail="sellability_degraded flag pre-set off-hot-path (SLOW-loop "
+                "sell-sim re-probe: delayed honeypot / tax-flip / inconclusive-refuse); "
+                "exit while an exit is still possible",
             )
 
         # (i) MANDATORY HARD STOP — the FIXED-at-entry T-321 trigger.  We reuse the

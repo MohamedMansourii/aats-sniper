@@ -143,6 +143,151 @@ def test_no_float_money_in_breaker_state_store():
         )
 
 
+def test_insider_dump_flag_absent_reads_false(fake_clock):
+    """E14a: absent insider_dump flag reads False, detail reads None —
+    identical default posture to get_narrative_failure_flag()."""
+    store = InMemoryStateStore(clock=fake_clock)
+    assert store.get_insider_dump_flag("MINT_D") is False
+    assert store.get_insider_dump_detail("MINT_D") is None
+
+
+def test_insider_dump_flag_set_then_get(fake_clock):
+    """E14a: set_insider_dump_flag() makes get_insider_dump_flag() True and
+    carries the (fraction_sold_bps, event_slot) payload via get_insider_dump_detail()."""
+    store = InMemoryStateStore(clock=fake_clock)
+    store.set_insider_dump_flag("MINT_D", fraction_sold_bps=3_500, event_slot=999)
+    assert store.get_insider_dump_flag("MINT_D") is True
+    assert store.get_insider_dump_detail("MINT_D") == (3_500, 999)
+
+
+def test_insider_dump_flag_ttl_expiry_mirrors_narrative_failure(fake_clock):
+    """E14a: TTL-based expiry — SAME mechanism as test_veto_flag_ttl /
+    narrative:{mint} (no explicit clear method; expiry is the only path back
+    to False)."""
+    store = InMemoryStateStore(clock=fake_clock)
+    store.set_insider_dump_flag("MINT_D", fraction_sold_bps=5_000, event_slot=1, ttl_seconds=3)
+    assert store.get_insider_dump_flag("MINT_D") is True
+
+    fake_clock.advance(4_000)
+    assert store.get_insider_dump_flag("MINT_D") is False
+    assert store.get_insider_dump_detail("MINT_D") is None
+
+
+def test_insider_dump_flag_default_ttl_120s(fake_clock):
+    """Default TTL matches set_narrative_failure_flag's default (120s)."""
+    store = InMemoryStateStore(clock=fake_clock)
+    store.set_insider_dump_flag("MINT_D", fraction_sold_bps=5_000, event_slot=1)
+    fake_clock.advance(119_000)
+    assert store.get_insider_dump_flag("MINT_D") is True
+    fake_clock.advance(2_000)  # total 121s
+    assert store.get_insider_dump_flag("MINT_D") is False
+
+
+def test_insider_dump_flag_isolated_per_mint(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    store.set_insider_dump_flag("MINT_A", fraction_sold_bps=2_000, event_slot=1)
+    assert store.get_insider_dump_flag("MINT_A") is True
+    assert store.get_insider_dump_flag("MINT_B") is False
+
+
+def test_insider_dump_flag_rejects_bool_fraction(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    with pytest.raises(TypeError):
+        store.set_insider_dump_flag("MINT_D", fraction_sold_bps=True, event_slot=1)
+
+
+def test_insider_dump_flag_rejects_float_fraction(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    with pytest.raises(TypeError):
+        store.set_insider_dump_flag("MINT_D", fraction_sold_bps=50.5, event_slot=1)
+
+
+def test_insider_dump_flag_rejects_fraction_over_10000(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    with pytest.raises(ValueError):
+        store.set_insider_dump_flag("MINT_D", fraction_sold_bps=10_001, event_slot=1)
+
+
+def test_insider_dump_flag_rejects_negative_fraction(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    with pytest.raises(ValueError):
+        store.set_insider_dump_flag("MINT_D", fraction_sold_bps=-1, event_slot=1)
+
+
+def test_insider_dump_flag_rejects_bool_event_slot(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    with pytest.raises(TypeError):
+        store.set_insider_dump_flag("MINT_D", fraction_sold_bps=1, event_slot=True)
+
+
+def test_insider_dump_flag_rejects_negative_event_slot(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    with pytest.raises(ValueError):
+        store.set_insider_dump_flag("MINT_D", fraction_sold_bps=1, event_slot=-1)
+
+
+# --- E17 sellability-degraded flag (mirrors insider_dump — same TTL semantics) ---
+
+
+def test_sellability_degraded_flag_absent_reads_false(fake_clock):
+    """E17: absent sellability flag reads False, detail reads None — refuse-by-
+    default presence semantics identical to insider_dump/narrative_failure."""
+    store = InMemoryStateStore(clock=fake_clock)
+    assert store.get_sellability_degraded_flag("MINT_S") is False
+    assert store.get_sellability_degraded_detail("MINT_S") is None
+
+
+def test_sellability_degraded_flag_set_then_get(fake_clock):
+    """E17: set makes get True and carries the (reason, event_slot) payload."""
+    store = InMemoryStateStore(clock=fake_clock)
+    store.set_sellability_degraded_flag("MINT_S", reason="degraded_sim_revert", event_slot=999)
+    assert store.get_sellability_degraded_flag("MINT_S") is True
+    assert store.get_sellability_degraded_detail("MINT_S") == ("degraded_sim_revert", 999)
+
+
+def test_sellability_degraded_flag_ttl_expiry(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    store.set_sellability_degraded_flag("MINT_S", reason="inconclusive", event_slot=1, ttl_seconds=3)
+    assert store.get_sellability_degraded_flag("MINT_S") is True
+    fake_clock.advance(3_000)
+    assert store.get_sellability_degraded_flag("MINT_S") is False
+    assert store.get_sellability_degraded_detail("MINT_S") is None
+
+
+def test_sellability_degraded_flag_default_ttl_120s(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    store.set_sellability_degraded_flag("MINT_S", reason="degraded_other", event_slot=1)
+    fake_clock.advance(119_000)
+    assert store.get_sellability_degraded_flag("MINT_S") is True
+    fake_clock.advance(2_000)
+    assert store.get_sellability_degraded_flag("MINT_S") is False
+
+
+def test_sellability_degraded_flag_isolated_per_mint(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    store.set_sellability_degraded_flag("MINT_A", reason="degraded_zero_output", event_slot=1)
+    assert store.get_sellability_degraded_flag("MINT_A") is True
+    assert store.get_sellability_degraded_flag("MINT_B") is False
+
+
+def test_sellability_degraded_flag_rejects_empty_reason(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    with pytest.raises(ValueError):
+        store.set_sellability_degraded_flag("MINT_S", reason="", event_slot=1)
+
+
+def test_sellability_degraded_flag_rejects_bool_event_slot(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    with pytest.raises(TypeError):
+        store.set_sellability_degraded_flag("MINT_S", reason="x", event_slot=True)
+
+
+def test_sellability_degraded_flag_rejects_negative_event_slot(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    with pytest.raises(ValueError):
+        store.set_sellability_degraded_flag("MINT_S", reason="x", event_slot=-1)
+
+
 def test_concurrent_claim_atomicity():
     """Concurrent claim_entering across 100 threads yields exactly one winner."""
     store = InMemoryStateStore()
