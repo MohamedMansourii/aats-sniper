@@ -30,19 +30,13 @@ integrated-live **and** GATE-A/GATE-B on the RECORDED corpus yield **GO/NO-GO**.
 `DRY_RUN`-disabled until the CEO authorizes.
 
 ## 2 · NEXT ACTIONS — do these in order
-1. **⚠️ Wave 2C — LIVE WIRING & INTEGRATION (top priority; fixes the review's HIGH findings).** Author a
-   sequential dual-G3 wave (copy the runner from any `.agency/04-plan/workflows/*.js`) with:
-   - **2C-1 (`agent-orchestration-engineer` + `risk-guardrails-engineer`):** wire ALL Wave-2 flag PRODUCERS into
-     the live SLOW/controller loop so `insider_dump` (E14), `sellability_degraded` (E17), and `lp_unlock_approaching`
-     (E19) flags are actually SET on real ticks (today only `narrative_failure` is). **Add the missing E19
-     StateStore `get/set_lp_unlock_approaching_flag`** (Protocol + InMemoryStateStore, mirror `insider_dump`) and
-     have `fast_loop` READ + PASS `lp_unlock_approaching_flag` into `on_tick`. Ship END-TO-END integration tests
-     proving each catastrophic exit FIRES live. Also decide whether the Wave-2B ENTRY gates (deployer-rep, funding-age,
-     lp-unlock-entry) should wire into `snipe_loop` now or stay paper-neutral (document the choice).
-   - **2C-2 (`nlp-sentiment-engineer`):** fix the `classify_direction()` negation blind spot in
-     `aats/sentiment/call_extract.py` ("Not bullish … would not touch it" → wrongly `long`); add negation guards +
-     tests, mirroring the buy-family negation logic.
-   Verify full suite, commit, reconcile docs, write acceptance artifacts.
+1. **✅ Wave 2C DONE** (`7722294`) — Wave-2 catastrophic exits now WIRED LIVE (`SlowLoopEnrichmentWiring` drives the
+   producers; E19 StateStore + fast_loop added; `test_e2e_catastrophic_exits.py` with a control test proves each
+   exit fires; classify_direction negation fixed). **Milestone B is now genuinely LIVE-WIRED.** ▸ NEXT CLEANUP
+   (small): reconcile MISSION-BOARD/MILESTONES to this STATE, and backfill per-item dual-G3 acceptance artifacts for
+   EN1/Wave-1/E15/E16/E18/E19 under `.agency/05-reports/` (only `WAVE-2C-acceptance.md` exists so far). One OPEN
+   decision: whether the Wave-2B ENTRY gates (deployer-rep/funding-age/lp-unlock-entry) wire into `snipe_loop` now
+   or stay paper-neutral — currently paper-neutral (document if you change it).
 2. **Resume Wave 3** (chart-path architecture): `git stash list` → pop `wave3-wip-paused-for-review` +
    `wave3-wip-agency-docs` (both preserved), then re-run
    `Workflow({scriptPath:"C:\\dev\\aats\\.agency\\04-plan\\workflows\\wave3-chartpath.js", resumeFromRunId:"wf_74debb68-057"})`
@@ -55,6 +49,9 @@ integrated-live **and** GATE-A/GATE-B on the RECORDED corpus yield **GO/NO-GO**.
 ## 3 · DONE LEDGER (verified + committed, newest first)
 | Commit | What | Honest note |
 |---|---|---|
+| `7722294` | **Wave 2C** — Wave-2 catastrophic exits WIRED LIVE + E2E proof + classify_direction fix | ✅ Milestone B now genuinely live-wired; suite 2965 |
+| `9441359` | loop-governance install (LOOP.md + budget + run-log + control-plane reg) | loop-engineering PARTIAL→governed |
+| `a6a85ad` | program review recorded + STATE overclaims corrected | — |
 | `5209933` | STATE resume-spine update | — |
 | `abf2477` | E18 min-holder floor (WIRED) + E19 LP-unlock code | ⚠️ E19 open-position exit **NOT live-wired** (Wave 2C); E18 gate IS wired |
 | `1c70513` | E15 serial-deployer rep + E16 fresh-wallet | gates built + unit-tested; **entry-gate wiring into snipe_loop pending** (Wave 2C decision) |

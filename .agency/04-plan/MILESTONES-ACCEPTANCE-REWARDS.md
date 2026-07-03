@@ -1,5 +1,9 @@
 # AATS — MILESTONES, GOALS & THE REWARDING ACCEPTANCE SYSTEM
 
+> ⚠️ **Tallies below lag — `.agency/STATE.md` is authoritative.** As of 2026-07-03: **Milestone A ✅ and
+> Milestone B ✅ COMPLETE + live-wired** (Wave 2C closed the wiring gap). ~250/790 pts earned. Next milestone: C
+> (chart-path architecture, Wave 3 stashed) → D (detection) → ⭐ E (edge proof). Reconcile this file to STATE.
+
 > Goals to hit, the gate that accepts each one, and a points/reward ledger so progress is visible and every
 > mission's completion is *earned*, not asserted. This gamifies the swarm honestly: **points are awarded ONLY
 > when the Acceptance Gate (`MISSION-BOARD.md §ACCEPTANCE GATE`) is fully satisfied** — dual-G3 PASS + suite

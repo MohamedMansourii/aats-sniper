@@ -1,5 +1,10 @@
 # AATS — MISSION BOARD (divided missions for the agent swarm)
 
+> ⚠️ **THE PER-ITEM STATUS MARKERS BELOW LAG — `.agency/STATE.md` is authoritative.** As of 2026-07-03:
+> EN1 · Wave 1 · Wave 2A · Wave 2B (E15/E16/E18/E19) · Wave 2C are ALL DONE, and **Milestone B is COMPLETE and
+> live-wired**. The ◻/⚠️ markers in this file are stale (mechanical reconciliation is a tracked cleanup step);
+> trust STATE's DONE ledger + NEXT ACTIONS over this board.
+
 > The single dispatch queue. Each mission is self-contained and works **cold, from files alone**. Dispatch in
 > the order below (dependencies are marked). Every mission's Definition-of-Done is the **Acceptance Gate**
 > (§Acceptance). Points feed the reward system in `MILESTONES-ACCEPTANCE-REWARDS.md`.

@@ -13,7 +13,8 @@
 {"date":"2026-07-02","pattern":"enhancement-wave","run":"wave2b-finish-E18-E19","outcome":"G3-PASS (2 items)","tokens_estimate":721000,"commit":"abf2477","note":"min-holder floor + LP-unlock; Milestone B code-complete"}
 {"date":"2026-07-02","pattern":"enhancement-wave","run":"wave3-chartpath","outcome":"PAUSED (stashed for review)","tokens_estimate":600000,"commit":null,"note":"~2 items built (tensor,label,ADR) then paused; stash wave3-wip-*"}
 {"date":"2026-07-03","pattern":"review","run":"program-review-5auditor","outcome":"NEEDS-WORK (caught unwired exits)","tokens_estimate":802000,"commit":"a6a85ad","note":"safety airtight; Wave-2 exits built-not-wired; docs drifted"}
-{"date":"2026-07-03","pattern":"enhancement-wave","run":"wave2c-live-wiring","outcome":"IN-PROGRESS","tokens_estimate":null,"commit":null,"note":"wire exit producers + E19 StateStore + classify_direction negation + E2E test"}
+{"date":"2026-07-03","pattern":"enhancement-wave","run":"wave2c-live-wiring","outcome":"G3-PASS (2 items)","tokens_estimate":1623000,"commit":"7722294","note":"exit producers wired live via SlowLoopEnrichmentWiring + E19 StateStore + E2E test w/ control + classify_direction negation; suite 2965; artifact WAVE-2C-acceptance.md"}
+{"date":"2026-07-03","pattern":"loop-governance","run":"loop-governance-install","outcome":"COMPLETE","tokens_estimate":30000,"commit":"9441359","note":"LOOP.md + loop-budget.md + loop-run-log.md + control-plane registration; loop-engineering PARTIAL->governed"}
 {"date":"2026-07-03","pattern":"review","run":"methodology-compliance-review","outcome":"SOLID-WITH-GAPS (swarm MOSTLY, loop PARTIAL)","tokens_estimate":248000,"commit":null,"note":"loop governance missing: cadence, budget/run-log, L-level, control-plane reg -> this file + LOOP.md + budget fix it"}
 
 ## Alerts This Period
