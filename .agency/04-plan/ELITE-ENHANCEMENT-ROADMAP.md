@@ -1,5 +1,9 @@
 # AATS — ELITE ENHANCEMENT ROADMAP (synthesized from the domain audit)
 
+> ⚠️ **LIVE STATUS lives in `.agency/STATE.md`** (the resume spine) + `MISSION-BOARD.md`. This file is the
+> original 28-item plan — consult STATE.md FIRST when resuming. As of 2026-07-03: Milestone A done · Wave 2A
+> done · E15 done · **E16 unreviewed** · E18/E19/Wave3/Wave4/edge-proof pending.
+
 **Synthesized:** 2026-07-01 by Agency Runtime (the `orchestrator`/synthesis + honest-edge agents failed on an
 account-access error — see §BLOCKER). Source: `.agency/00-brief/ELITE-ENHANCEMENT-DIRECTIVE.md` + the audit
 workflow `wf_0e242949-63a` (4/5 domain readers completed; full findings in the workflow task output).
