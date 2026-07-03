@@ -86,6 +86,26 @@ class RedFlag(StrEnum):
     # records that a candidate is trusted, and trust does NOT skip the safety gate.
     CREATOR_DENYLISTED = "creator_denylisted"  # 0 — known scam creator wallet
     MINT_DENYLISTED = "mint_denylisted"  # 0b — known scam token mint
+    # E15 — serial-deployer / dev-wallet-rugged-before reputation pre-gate veto
+    # (aats/risk/deployer_reputation_gate.py + aats/ingestion/deployer_reputation.py).
+    # A creator wallet with >= the configured count of PRIOR (point-in-time,
+    # leak-free) confirmed RUGGED launches is an instant, pre-gate REJECT.  A
+    # single prior rug DOWN-WEIGHTS conviction instead (see the gate module) —
+    # it never appears as a red flag on its own.
+    SERIAL_DEPLOYER_RUGGED = "serial_deployer_rugged"  # 0c — repeat-rug creator wallet
+    # E16 — dev-funded-just-before-launch fresh-wallet pre-gate veto
+    # (aats/risk/dev_funding_age_gate.py + aats/ingestion/dev_funding_age.py).
+    # A creator wallet whose FIRST observed inbound SOL funding lands within
+    # the configured reject window before this launch's deploy slot is an
+    # instant, pre-gate REJECT — a known rug tell (freshly-funded burner dev
+    # wallet).  A funding age in the wider down-weight band instead shrinks
+    # conviction (see the gate module); it never appears as a red flag alone.
+    DEV_FUNDED_JUST_BEFORE_LAUNCH = "dev_funded_just_before_launch"  # 0d
+    # Refuse-by-default: the creator wallet's funding history could not be
+    # conclusively decoded (RPC failure, no visible history, or budget
+    # exhausted before reaching a confirmed inbound-funding transaction).
+    # Unknown is NEVER treated as "established/safe" — see dev_funding_age.py.
+    DEV_FUNDING_UNDECODABLE = "dev_funding_undecodable"  # 0e
     # Refuse-by-default conditions (input could not be evaluated in budget):
     INPUT_STALE = "input_stale"  # data older than the staleness budget
     INPUT_INCOMPLETE = "input_incomplete"  # a required field was missing/unknown
