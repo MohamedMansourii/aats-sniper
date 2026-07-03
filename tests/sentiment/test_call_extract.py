@@ -202,6 +202,76 @@ class TestDirectionClassifier:
         assert classify_direction("AVOID, THIS IS A SCAM") == "avoid"
 
 
+class TestBullishFamilyNegationGuard:
+    """PROGRAM-REVIEW-2026-07-03.md finding #6 (MED, dormant):
+    `classify_direction()` misclassified negated bullish phrases as "long".
+
+    Reproduced defect (must now be fixed, never re-regress):
+        classify_direction(
+            "Not bullish on this one at all, would not touch it"
+        ) used to return "long" — directly contradicting the docstring's own
+        "never default to long" rule.  A negated bullish-family keyword must
+        drop the post (return None), exactly like the pre-existing
+        buy-family negation handling for "don't buy" / "not a buy".
+    """
+
+    def test_reproduced_negation_case_is_no_longer_long(self) -> None:
+        """The exact reproduced string from the program review."""
+        result = classify_direction(
+            "Not bullish on this one at all, would not touch it"
+        )
+        assert result != "long", (
+            "regression: negated bullish phrase misclassified as 'long'"
+        )
+        assert result is None
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Not bullish on this project, would not touch it",
+            "This is definitely not going to moon",
+            "This will never 100x, don't get your hopes up",
+            "Not going long on this one, feels like a trap",
+            "No way this is mooning, not buying the hype",
+            "I am not bullish at all on this chart",
+        ],
+    )
+    def test_negated_bullish_family_phrase_is_never_long(self, text: str) -> None:
+        assert classify_direction(text) != "long"
+
+    def test_negated_bullish_with_no_other_signal_is_dropped_none(self) -> None:
+        """A negated bullish keyword with nothing else present is NO SIGNAL
+        (None) — the guard must discard the contribution, never guess
+        'avoid' as a replacement label."""
+        assert classify_direction("Not bullish on this one, would not touch it") is None
+        assert classify_direction("This will never 100x honestly") is None
+        assert classify_direction("Not going long on this one") is None
+
+    def test_negated_bullish_plus_explicit_avoid_phrase_is_avoid(self) -> None:
+        """When an explicit avoid phrase is ALSO present, that phrase (not a
+        guess) drives the 'avoid' classification; the negated bullish token
+        contributes nothing to either side."""
+        assert classify_direction("Not bullish at all, this is a scam") == "avoid"
+
+    def test_unnegated_bullish_family_phrase_still_classifies_long(self) -> None:
+        """Sanity check: the guard must not over-fire on plain (unnegated)
+        bullish-family phrases — those must still classify as 'long'."""
+        assert classify_direction("Extremely bullish on this one") == "long"
+        assert classify_direction("This is going to moon soon") == "long"
+        assert classify_direction("Going long on this, LFG") == "long"
+        assert classify_direction("This is the next 100x for sure") == "long"
+
+    def test_negation_scope_does_not_leak_across_a_clause_boundary(self) -> None:
+        """A negation cue in an EARLIER, unrelated clause (separated by a
+        full stop) must NOT suppress a later, distinct bullish mention —
+        the guard is local to the clause governing the keyword, not a
+        blanket 'any negation anywhere in the post' rule."""
+        assert (
+            classify_direction("No thanks, I'm out. Bullish on this one though!")
+            == "long"
+        )
+
+
 # ---------------------------------------------------------------------------
 # CE-B / CE-D: extract_caller_call — RawPost -> CallerCall (or DROP)
 # ---------------------------------------------------------------------------

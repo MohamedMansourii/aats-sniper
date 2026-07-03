@@ -47,7 +47,17 @@ def _state(engine: ExitEngine, mint: str = "M") -> ExitState:
     return ExitState.at_entry(mint=mint, entry_fill_price=ENTRY, config=engine.config)
 
 
-def _tick(engine, state, mark, *, narrative=False, insider=False, sellability=False, bt=BT):
+def _tick(
+    engine,
+    state,
+    mark,
+    *,
+    narrative=False,
+    insider=False,
+    sellability=False,
+    lp_unlock=False,
+    bt=BT,
+):
     return engine.on_tick(
         state,
         mark_price=mark,
@@ -55,6 +65,7 @@ def _tick(engine, state, mark, *, narrative=False, insider=False, sellability=Fa
         narrative_failure_flag=narrative,
         insider_dump_flag=insider,
         sellability_degraded_flag=sellability,
+        lp_unlock_approaching_flag=lp_unlock,
     )
 
 
@@ -452,6 +463,126 @@ def test_narrative_failure_outranks_sellability_degraded():
     eng = _engine()
     d = _tick(eng, _state(eng), Decimal("100"), narrative=True, sellability=True)
     assert d.reason is ExitReason.NARRATIVE_FAILURE
+
+
+# --------------------------------------------------------------------------- #
+# E19 — TIME-LOCKED LP unlock APPROACHING auto-exit (catastrophic tier, de-risk
+# only).  The FAST branch reads a PRE-SET bool (the SLOW-loop LP-unlock watcher
+# produces it off the hot path); it can ONLY force a full SECURE exit — never
+# hold longer, widen a stop, or size up.
+#
+# 2026-07-03 program review (HIGH): this parameter existed + was documented in
+# ExitEngine.on_tick but had ZERO test coverage proving the branch actually
+# fires — "doubly dead" (no StateStore methods either, see test_state_store.py
+# and fast_loop.py).  This block is the missing unit-test half of that fix.
+# --------------------------------------------------------------------------- #
+
+
+def test_lp_unlock_approaching_flag_forces_secure_full_exit_on_healthy_mark():
+    """With the pre-set lp_unlock_approaching flag set, a fully HEALTHY mark (no
+    stop, no TP) is force-exited: full remainder, SECURE routing.  This is the
+    mutation canary — remove the branch and this HOLD-otherwise mark stops
+    force-exiting (RED)."""
+    eng = _engine()
+    st = _state(eng)
+    d = _tick(eng, st, Decimal("100"), lp_unlock=True)  # mark == entry: would HOLD
+    assert d.reason is ExitReason.LP_UNLOCK_APPROACHING
+    assert isinstance(d.intent, ExitIntent)  # full flatten, never a ReduceIntent
+    assert d.fraction_bps == 10_000  # 100% of remaining
+    assert d.next_state.remaining_bps == 0
+    assert d.exit_mode is MevExitMode.SECURE  # exit while an exit is still possible
+    assert d.intent.exit_mode == "secure"
+
+
+def test_lp_unlock_approaching_unset_is_no_change():
+    """With the flag UNSET, on_tick behaves exactly as before: a healthy mark holds,
+    a TP mark still scales out.  The new branch adds nothing when the flag is off."""
+    eng = _engine()
+    d_hold = _tick(eng, _state(eng), Decimal("100"), lp_unlock=False)
+    assert d_hold.reason is ExitReason.NONE
+    assert d_hold.intent is None
+    d_tp = _tick(eng, _state(eng), ENTRY * Decimal("1.5"), lp_unlock=False)
+    assert d_tp.reason is ExitReason.TAKE_PROFIT
+    assert isinstance(d_tp.intent, ReduceIntent)
+
+
+def test_lp_unlock_approaching_overrides_hard_stop():
+    """On a stop breach AND lp_unlock_approaching, the lp-unlock exit is reported
+    (it sits ABOVE the mechanical hard stop — exit on the unlock-window signal,
+    not after the LP is pulled).  Removing the branch would report HARD_STOP."""
+    eng = _engine()
+    d = _tick(eng, _state(eng), Decimal("50"), lp_unlock=True)  # breaches -40% stop
+    assert d.reason is ExitReason.LP_UNLOCK_APPROACHING
+    assert isinstance(d.intent, ExitIntent)
+    assert d.exit_mode is MevExitMode.SECURE
+
+
+def test_lp_unlock_approaching_overrides_take_profit():
+    """A TP-rung mark with the lp_unlock flag set force-exits, never books a
+    partial gain — the catastrophic tier wins."""
+    eng = _engine()
+    d = _tick(eng, _state(eng), ENTRY * Decimal("6"), lp_unlock=True)  # 6x -> TP rung
+    assert d.reason is ExitReason.LP_UNLOCK_APPROACHING
+    assert isinstance(d.intent, ExitIntent)
+    assert d.fraction_bps == 10_000
+
+
+def test_sellability_degraded_outranks_lp_unlock_approaching():
+    """sellability_degraded sits ABOVE lp_unlock_approaching.  When BOTH are set,
+    sellability_degraded is reported — pins the ordering RED under a swap."""
+    eng = _engine()
+    d = _tick(eng, _state(eng), Decimal("100"), sellability=True, lp_unlock=True)
+    assert d.reason is ExitReason.SELLABILITY_DEGRADED
+
+
+def test_insider_dump_outranks_lp_unlock_approaching():
+    """insider_dump sits ABOVE lp_unlock_approaching.  When BOTH are set,
+    insider_dump is reported."""
+    eng = _engine()
+    d = _tick(eng, _state(eng), Decimal("100"), insider=True, lp_unlock=True)
+    assert d.reason is ExitReason.INSIDER_DUMP
+
+
+def test_narrative_failure_outranks_lp_unlock_approaching():
+    """narrative_failure remains the single HIGHEST rule even against lp-unlock."""
+    eng = _engine()
+    d = _tick(eng, _state(eng), Decimal("100"), narrative=True, lp_unlock=True)
+    assert d.reason is ExitReason.NARRATIVE_FAILURE
+
+
+def test_lp_unlock_approaching_flag_must_be_plain_bool():
+    """The lp_unlock input is a plain PRE-SET bool (mirrors the flags above) — a
+    truthy int is refused so the FAST branch can never be fed a non-bool signal."""
+    eng = _engine()
+    with pytest.raises(TypeError):
+        eng.on_tick(
+            _state(eng),
+            mark_price=Decimal("100"),
+            block_time_ms=BT,
+            lp_unlock_approaching_flag=1,  # type: ignore[arg-type]
+        )
+
+
+def test_lp_unlock_approaching_secure_even_on_fast_preset():
+    """Like every defensive exit, an lp-unlock exit routes SECURE even on a Fast
+    preset — a pullable-LP-window exit is never sandwiched on the way out."""
+    eng = ExitEngine(config=preset("fast_balanced"))
+    assert eng.config.default_exit_mode is MevExitMode.FAST
+    d = _tick(eng, _state(eng), Decimal("100"), lp_unlock=True)
+    assert d.reason is ExitReason.LP_UNLOCK_APPROACHING
+    assert d.exit_mode is MevExitMode.SECURE
+    assert d.intent.exit_mode == "secure"
+
+
+def test_lp_unlock_approaching_is_de_risk_only():
+    """The lp-unlock branch only ever sheds risk: remaining never grows and the
+    intent is a bounded full flatten (never an add)."""
+    eng = _engine()
+    st = _state(eng)
+    d = _tick(eng, st, Decimal("120"), lp_unlock=True)
+    assert d.next_state.remaining_bps <= st.remaining_bps
+    assert isinstance(d.intent, ExitIntent)
+    assert 1 <= d.intent.fraction_bps <= 10_000
 
 
 def test_sellability_degraded_flag_must_be_plain_bool():

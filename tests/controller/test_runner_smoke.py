@@ -217,6 +217,88 @@ def test_run_bounded_smoke() -> None:
 # DRY_RUN_ENABLED=false exits with code 1
 # ---------------------------------------------------------------------------
 
+def test_main_assembly_wires_flag_sink_to_shared_store() -> None:
+    """Regression for F1-LIVE-WIRE-E14-E17-NO-FLAG-SINK (2C-1 strike 1).
+
+    The producer-level E2E tests in test_e2e_catastrophic_exits.py construct
+    InsiderDumpDetector/SellabilityReprober directly WITH flag_sink=store — they
+    never exercise the real __main__ assembly, so a dropped ``flag_sink=`` kwarg
+    in the actual runner (``python -m aats.controller``) went uncaught: the
+    detectors defaulted to flag_sink=None and silently never force-exited.
+
+    This test drives the REAL __main__._run() assembly (bounded via max_ticks,
+    same mechanism as test_run_bounded_smoke above) and asserts each enrichment
+    producer — E14 insider-dump, E17 sellability-reprobe, E19 lp-unlock — is
+    constructed with a flag_sink that is the SAME shared state-store instance,
+    not merely "not None" (a decoy/independent store would still pass a bare
+    not-None check but would never reach the FastLoop's force-exit branch).
+    """
+    from aats.execution.sell_sim import SellSimVenue  # noqa: F401  (import parity)
+    from aats.ingestion.insider_dump import InsiderDumpDetector
+    from aats.risk.lp_unlock_gate import LpUnlockExitWatcher
+    from aats.risk.sellability_reprobe import SellabilityReprober
+
+    mod = importlib.import_module("aats.controller.__main__")
+
+    captured: dict[str, object] = {}
+
+    _orig_insider_init = InsiderDumpDetector.__init__
+    _orig_reprober_init = SellabilityReprober.__init__
+    _orig_lp_init = LpUnlockExitWatcher.__init__
+
+    def _capturing_insider_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        _orig_insider_init(self, *args, **kwargs)
+        captured["insider_dump_flag_sink"] = self._flag_sink
+
+    def _capturing_reprober_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        _orig_reprober_init(self, *args, **kwargs)
+        captured["sellability_flag_sink"] = self._flag_sink
+
+    def _capturing_lp_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        _orig_lp_init(self, *args, **kwargs)
+        captured["lp_unlock_flag_sink"] = self.flag_sink
+
+    InsiderDumpDetector.__init__ = _capturing_insider_init  # type: ignore[method-assign]
+    SellabilityReprober.__init__ = _capturing_reprober_init  # type: ignore[method-assign]
+    LpUnlockExitWatcher.__init__ = _capturing_lp_init  # type: ignore[method-assign]
+
+    try:
+        asyncio.run(
+            mod._run(max_ticks=3, launch_interval_s=0.05, fast_tick_s=0.01)
+        )
+    finally:
+        InsiderDumpDetector.__init__ = _orig_insider_init  # type: ignore[method-assign]
+        SellabilityReprober.__init__ = _orig_reprober_init  # type: ignore[method-assign]
+        LpUnlockExitWatcher.__init__ = _orig_lp_init  # type: ignore[method-assign]
+
+    assert captured.get("insider_dump_flag_sink") is not None, (
+        "InsiderDumpDetector must be constructed with a flag_sink in the real "
+        "__main__ assembly — dropping it means E14 detections never reach the "
+        "FastLoop's force-exit branch (silent no-fire defect)."
+    )
+    assert captured.get("sellability_flag_sink") is not None, (
+        "SellabilityReprober must be constructed with a flag_sink in the real "
+        "__main__ assembly — dropping it means E17 re-probes never reach the "
+        "FastLoop's force-exit branch (silent no-fire defect)."
+    )
+    assert captured.get("lp_unlock_flag_sink") is not None, (
+        "LpUnlockExitWatcher (E19) must remain wired with a flag_sink — sanity "
+        "anchor for the identity comparisons below."
+    )
+
+    # Not merely "a" store — THE SAME shared store instance the FastLoop reads
+    # flags from.  E19 was already correctly wired prior to this fix, so use it
+    # as the reference identity for E14 and E17.
+    assert captured["insider_dump_flag_sink"] is captured["lp_unlock_flag_sink"], (
+        "E14 flag_sink must be the SAME state-store instance as E19's flag_sink "
+        "— a decoy/independent store would pass a bare not-None check but would "
+        "never surface a flag the FastLoop actually reads."
+    )
+    assert captured["sellability_flag_sink"] is captured["lp_unlock_flag_sink"], (
+        "E17 flag_sink must be the SAME state-store instance as E19's flag_sink."
+    )
+
+
 def test_dry_run_false_exits_code_1(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Setting DRY_RUN_ENABLED=false causes sys.exit(1) per the runner HARD GATE.
 

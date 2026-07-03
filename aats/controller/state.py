@@ -33,6 +33,18 @@ Key conventions (data-models.md §9):
                           semantics, no new storage pattern, no frozen contract);
                           the FAST exit branch (E17) reads ONLY the bare bool via
                           get_sellability_degraded_flag() — never the payload.
+  lp_unlock_approaching:{mint}
+                       -> "1" (+ reason/event_slot payload) if the SLOW-loop
+                          LP-unlock watcher (aats.risk.lp_unlock_gate.
+                          LpUnlockExitWatcher, E19) measured a TIME-LOCKED LP's
+                          unlock-slot proximity on an OPEN position and found the
+                          unlock APPROACHING (or the schedule undecodable —
+                          refuse-by-default) within the configured exit horizon.
+                          Mirrors sellability_degraded:{mint} exactly (same
+                          TTL-based presence semantics, no new storage pattern,
+                          no frozen contract); the FAST exit branch (E19) reads
+                          ONLY the bare bool via get_lp_unlock_approaching_flag()
+                          — never the payload.
 
 ATOMIC SNIPE->FAST HANDOFF (ADR-0007):
   The fsm_lock:{mint} key is written atomically (SETNX / NX flag) with the
@@ -244,6 +256,59 @@ class StateStore(Protocol):
         """
         ...
 
+    # --- LP-unlock-approaching flag (E19: SLOW watcher writes, FAST reads bool) ---
+    #
+    # Mirrors the sellability_degraded_flag mechanism EXACTLY (same TTL-based
+    # presence semantics — no new frozen contract, no new storage pattern).  The
+    # TIME-LOCKED LP unlock-proximity DETECTION lives OFF the hot path in
+    # aats.risk.lp_unlock_gate.LpUnlockExitWatcher (SLOW / N+2 tier), which
+    # measures the unlock-slot proximity in EVENT-TIME slots on open positions;
+    # this StateStore method is the ONLY place that watcher's result is
+    # persisted.  The FAST exit branch (E19) reads get_lp_unlock_approaching_flag()
+    # — a bare bool, zero computation, no RPC, no schedule decode — exactly like
+    # get_sellability_degraded_flag().  De-risk only: reading True can only cause
+    # a caller to force-exit; there is no explicit clear (mirrors the flags above).
+
+    def get_lp_unlock_approaching_flag(self, mint: str) -> bool:
+        """Return True iff an lp_unlock_approaching flag is currently set (unexpired).
+
+        PRE-SET boolean read for the FAST exit branch — same TTL-expiry semantics
+        as get_sellability_degraded_flag().  De-risk only: reading True can only
+        cause a caller to force-exit; there is no explicit clear (mirrors
+        insider_dump / sellability_degraded — natural TTL expiry only).
+        """
+        ...
+
+    def set_lp_unlock_approaching_flag(
+        self,
+        mint: str,
+        *,
+        reason: str,
+        event_slot: int,
+        ttl_seconds: int = 120,
+    ) -> None:
+        """The SLOW-loop LP-unlock watcher (aats.risk.lp_unlock_gate.
+        LpUnlockExitWatcher) sets the flag when a TIME-LOCKED LP's unlock slot
+        APPROACHES the current tick slot (or the schedule is undecodable —
+        refuse-by-default).
+
+        Carries the machine `reason` (an LpUnlockExitReason value, e.g.
+        "lp_unlock_approaching" / "lp_unlock_schedule_unknown") and the on-chain
+        `event_slot` (T-300a: event-time only — never wall-clock) alongside the
+        boolean presence flag so SLOW-loop / audit / dashboard consumers can read
+        WHY it fired via get_lp_unlock_approaching_detail().  The FAST exit
+        branch NEVER reads the payload directly — only the bare bool.
+        """
+        ...
+
+    def get_lp_unlock_approaching_detail(self, mint: str) -> tuple[str, int] | None:
+        """Return (reason, event_slot) if the flag is set (unexpired), else None.
+
+        SLOW-loop / audit / dashboard use ONLY — the FAST exit branch must never
+        call this (its return type is not a bare bool).
+        """
+        ...
+
     # --- Per-mint cooldown ---
 
     def set_cooldown(self, mint: str, ttl_seconds: int) -> None:
@@ -329,6 +394,8 @@ class InMemoryStateStore:
         self._insider_dump_flags: dict[str, tuple[int, int, int]] = {}
         # {mint: (reason, event_slot, expiry_ms)}  (E17 sellability re-probe)
         self._sellability_degraded_flags: dict[str, tuple[str, int, int]] = {}
+        # {mint: (reason, event_slot, expiry_ms)}  (E19 LP-unlock watcher)
+        self._lp_unlock_approaching_flags: dict[str, tuple[str, int, int]] = {}
         # {mint: expiry_ms}
         self._cooldowns: dict[str, int] = {}
         # {intent_id: expiry_ms}
@@ -537,6 +604,57 @@ class InMemoryStateStore:
             reason, slot, expiry = entry
             if self._is_expired(expiry):
                 del self._sellability_degraded_flags[mint]
+                return None
+            return (reason, slot)
+
+    # --- LP-unlock-approaching flag (E19) ---
+
+    def get_lp_unlock_approaching_flag(self, mint: str) -> bool:
+        with self._lock:
+            entry = self._lp_unlock_approaching_flags.get(mint)
+            if entry is None:
+                return False
+            _reason, _slot, expiry = entry
+            if self._is_expired(expiry):
+                del self._lp_unlock_approaching_flags[mint]
+                return False
+            return True
+
+    def set_lp_unlock_approaching_flag(
+        self,
+        mint: str,
+        *,
+        reason: str,
+        event_slot: int,
+        ttl_seconds: int = 120,
+    ) -> None:
+        if not isinstance(reason, str) or not reason:
+            raise ValueError(
+                "set_lp_unlock_approaching_flag: reason must be a non-empty str "
+                "(a machine LpUnlockExitReason value), got "
+                f"{type(reason).__name__}={reason!r}."
+            )
+        if isinstance(event_slot, bool) or not isinstance(event_slot, int):
+            raise TypeError(
+                "set_lp_unlock_approaching_flag: event_slot must be int (on-chain slot), "
+                f"not {type(event_slot).__name__}."
+            )
+        if event_slot < 0:
+            raise ValueError(
+                f"set_lp_unlock_approaching_flag: event_slot must be >= 0, got {event_slot}."
+            )
+        with self._lock:
+            expiry = self._now() + ttl_seconds * 1_000
+            self._lp_unlock_approaching_flags[mint] = (reason, event_slot, expiry)
+
+    def get_lp_unlock_approaching_detail(self, mint: str) -> tuple[str, int] | None:
+        with self._lock:
+            entry = self._lp_unlock_approaching_flags.get(mint)
+            if entry is None:
+                return None
+            reason, slot, expiry = entry
+            if self._is_expired(expiry):
+                del self._lp_unlock_approaching_flags[mint]
                 return None
             return (reason, slot)
 

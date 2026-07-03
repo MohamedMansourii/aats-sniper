@@ -168,6 +168,60 @@ _LONG_PATTERNS: tuple[str, ...] = (
     r"\bentry\s+here\b",
 )
 
+# Negation-fragile subset of `_LONG_PATTERNS`: bare adjective/keyword-style
+# bullish tokens ("bullish", "moon(ing)", "100x", "going long", "long this")
+# that read as their OPPOSITE once a negation cue governs them ("NOT bullish
+# on this", "no way this is mooning", "not going long here").  This mirrors
+# the buy-family mitigation above (line ~143): rather than trust a single
+# fragile keyword in isolation, a match from this subset is discarded — never
+# guessed into "avoid" — when preceded by a governing negation cue.  The
+# other `_LONG_PATTERNS` entries above are multi-word action phrases ("ape
+# in", "loading up", ...) that are already hard to accidentally negate and
+# are out of scope for this guard.
+_NEGATABLE_LONG_PATTERNS: frozenset[str] = frozenset(
+    {
+        r"\b100x\b",
+        r"\bnext\s+100x\b",
+        r"\bmoon(?:ing)?\b",
+        r"\bbullish\b",
+        r"\bgoing\s+long\b",
+        r"\blong\s+this\b",
+    }
+)
+
+# Negation cue tokens.  When one of these governs a `_NEGATABLE_LONG_PATTERNS`
+# match (see `_negation_governs` below), that match is NOT counted as a
+# bullish signal.
+_NEGATION_CUE_RE = re.compile(
+    r"\A(?:not|no|never|none|ain'?t|isn'?t|aren'?t|wasn'?t|weren'?t|"
+    r"don'?t|doesn'?t|didn'?t|won'?t|wouldn'?t|can'?t|cannot|couldn'?t|"
+    r"shouldn'?t)\Z"
+)
+
+# How many words immediately preceding a negatable phrase are inspected for a
+# governing negation cue (keeps the guard local to "not bullish"/"not really
+# bullish"/"no way this is mooning" style constructions rather than reaching
+# across an unrelated, earlier clause).
+_NEGATION_WINDOW_WORDS: int = 4
+
+_WORD_RE = re.compile(r"[a-z0-9']+")
+
+
+def _negation_governs(text_lower: str, match_start: int) -> bool:
+    """True if a negation cue governs the phrase starting at `match_start`.
+
+    Scans up to `_NEGATION_WINDOW_WORDS` words immediately before the match,
+    stopping at the nearest preceding clause-ending punctuation (`. ! ? ;` or
+    a comma) so an unrelated earlier clause's negation cannot leak into this
+    phrase's scope.
+    """
+    preceding = text_lower[:match_start]
+    boundary = max(preceding.rfind(ch) for ch in ".!?;,")
+    window_text = preceding[boundary + 1 :] if boundary != -1 else preceding
+    words = _WORD_RE.findall(window_text)[-_NEGATION_WINDOW_WORDS:]
+    return any(_NEGATION_CUE_RE.match(word) for word in words)
+
+
 # De-risk / warning phrases.  Matching ANY of these (with no LONG phrase
 # present) classifies the post as "avoid".  Includes explicit negated-buy
 # phrasings so that "don't buy this" is correctly read as bearish rather than
@@ -203,6 +257,27 @@ def _any_pattern_hits(text_lower: str, patterns: Sequence[str]) -> bool:
     return any(re.search(p, text_lower) for p in patterns)
 
 
+def _long_pattern_hit(text_lower: str) -> bool:
+    """True if any `_LONG_PATTERNS` phrase matches and is not negation-governed.
+
+    Non-negatable phrases behave exactly as before (any match counts).
+    Negatable phrases (`_NEGATABLE_LONG_PATTERNS`) are checked occurrence by
+    occurrence via `_negation_governs`: a negated occurrence ("not bullish",
+    "no way this is mooning") is simply discarded rather than counted as a
+    bullish hit.  It never flips the post to "avoid" by itself — dropping the
+    contribution (not guessing a replacement label) is the whole point of
+    this guard.
+    """
+    for pattern in _LONG_PATTERNS:
+        if pattern in _NEGATABLE_LONG_PATTERNS:
+            for match in re.finditer(pattern, text_lower):
+                if not _negation_governs(text_lower, match.start()):
+                    return True
+        elif re.search(pattern, text_lower):
+            return True
+    return False
+
+
 def classify_direction(text: str) -> DirectionLabel | None:
     """NO-LLM keyword/heuristic direction classifier: "long" vs "avoid".
 
@@ -221,7 +296,7 @@ def classify_direction(text: str) -> DirectionLabel | None:
     zero network calls, safe to run on every post.
     """
     text_lower = text.lower()
-    long_hit = _any_pattern_hits(text_lower, _LONG_PATTERNS)
+    long_hit = _long_pattern_hit(text_lower)
     avoid_hit = _any_pattern_hits(text_lower, _AVOID_PATTERNS)
 
     if long_hit and not avoid_hit:

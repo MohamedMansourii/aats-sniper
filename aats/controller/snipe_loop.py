@@ -57,7 +57,31 @@ LAMPORTS_PER_SOL = 1_000_000_000
 
 @runtime_checkable
 class PreTradeGate(Protocol):
-    """Sub-10ms safety gate (T-323).  Returns True if the entry is safe to proceed."""
+    """Sub-10ms safety gate (T-323).  Returns True if the entry is safe to proceed.
+
+    SNIPE calls ONLY this single opaque boolean seam — it never calls any
+    individual M4 sub-gate directly (deployer-reputation, dev-funding-age,
+    LP-unlock-entry, denylist, etc.).  Composing those sub-gates INTO the
+    concrete `PreTradeGate`/`SafetyGate` implementation (aats/risk/
+    pretrade_gate.py) is risk-rule math — M4 / risk-guardrails-engineer's
+    job, per the M3 charter boundary ("you invoke the RiskEngine and act on
+    its verdict; you do not implement risk-rule math").
+
+    2026-07-03 program-review deliverable #4 (E14/E17/E19 task) — STATE NOTE:
+    As of this change, `aats.risk.deployer_reputation_gate.DeployerReputationGate`,
+    `aats.risk.dev_funding_age_gate.DevFundingAgeGate`, and the ENTRY side of
+    `aats.risk.lp_unlock_gate.LpUnlockGate` (as opposed to its OPEN-position
+    `LpUnlockExitWatcher`, which IS wired — see enrichment_wiring.py) exist as
+    standalone, fully unit-tested modules but are NOT YET composed into
+    `SafetyGate.evaluate_fast()` — a `PreTradeGate` implementation only ever
+    returns the aggregate verdict SNIPE reads here.  DECISION: DEFER wiring
+    these three entry-side gates into the composed `SafetyGate` for now (stay
+    paper-neutral) rather than have M3 reach into M4's gate-composition
+    internals.  TODO(risk-guardrails-engineer): compose all three into
+    `SafetyGate.evaluate_fast()` — de-risk-only (reject / down-weight,
+    conviction clamped <= 1), never a size-up — when ready.  This is a
+    deliberate, documented deferral, not a silently-dead wire.
+    """
 
     def evaluate(self, event: LaunchEvent) -> bool: ...
 

@@ -303,17 +303,22 @@ async def _run(
     from aats.contracts.venue import SimulationVenue
     from aats.control_plane.server import ControlPlaneConfig, FeedBus, build_app
     from aats.controller.control_api import KillSwitch
+    from aats.controller.enrichment_wiring import SlowLoopEnrichmentWiring
     from aats.controller.fast_loop import FastLoop
     from aats.controller.loops import ControllerOrchestrator
     from aats.controller.reconcile import Reconciler
     from aats.controller.slow_loop import SlowLoop
     from aats.controller.snipe_loop import SnipeLoop
     from aats.controller.state import InMemoryStateStore
+    from aats.execution.sell_sim import SellSimVenue
+    from aats.ingestion.insider_dump import InsiderDumpDetector
     from aats.risk.circuit_breaker import (
         CircuitBreaker,
         InMemoryBreakerStore,
     )
     from aats.risk.exit_engine import ExitConfig, TpRung
+    from aats.risk.lp_unlock_gate import LpUnlockExitWatcher
+    from aats.risk.sellability_reprobe import SellabilityReprober
 
     # ------------------------------------------------------------------
     # 1. Redis (optional) + StateStore
@@ -446,6 +451,42 @@ async def _run(
         entering_ttl_seconds=30,
     )
 
+    # ------------------------------------------------------------------
+    # 4b. Enrichment-tier flag PRODUCERS (2026-07-03 program-review fix).
+    #
+    # Wires the E14 insider-dump / E17 sellability-reprobe / E19 lp-unlock-
+    # approaching catastrophic-exit flags into the RUNNING paper loop, off
+    # the FAST/SNIPE hot path.  See aats/controller/enrichment_wiring.py for
+    # the full "REFUSE-BY-DEFAULT vs. NOT YET WIRED" rationale.
+    #
+    #   * E17 (sellability re-probe): fully LIVE — SellSimVenue() defaults to
+    #     an offline MockRpcClient/MockSignerClient (DRY-RUN, no network).
+    #   * E14 (insider dump): the detector is LIVE and wired, but there is
+    #     currently NO on-chain SELL-event feed subscribed in this paper
+    #     runner (PumpPortalTransport only emits CREATE/WITHDRAW) — TODO(M1):
+    #     subscribe to trade events and forward decoded SELLs through
+    #     orchestrator.on_decoded_sell().
+    #   * E19 (LP-unlock): the watcher is LIVE and wired, but with NO schedule
+    #     source (no on-chain LP-locker decoder exists in this codebase yet) —
+    #     it cleanly no-ops (counted via stats.lp_unlock_schedule_absent_skipped)
+    #     until TODO(M1) wires a real LpUnlockScheduleSource.
+    # ------------------------------------------------------------------
+    insider_dump_detector = InsiderDumpDetector(flag_sink=state_store)
+    sellability_reprober = SellabilityReprober(probe=SellSimVenue(), flag_sink=state_store)
+    lp_unlock_watcher = LpUnlockExitWatcher(flag_sink=state_store)
+    enrichment = SlowLoopEnrichmentWiring(
+        store=state_store,
+        insider_dump_detector=insider_dump_detector,
+        sellability_reprober=sellability_reprober,
+        lp_unlock_watcher=lp_unlock_watcher,
+        lp_unlock_schedule_source=None,  # TODO(M1): no LP-locker decoder yet
+    )
+    log.info(
+        "enrichment wiring: E17 sellability_reprobe=LIVE (offline DRY_RUN sell-sim); "
+        "E14 insider_dump=WIRED_NO_FEED (no live SELL subscription yet — TODO M1); "
+        "E19 lp_unlock_watch=WIRED_NO_SOURCE (no LP-locker decoder yet — TODO M1)."
+    )
+
     orchestrator = ControllerOrchestrator(
         store=state_store,
         venue=venue,
@@ -454,6 +495,7 @@ async def _run(
         slow_loop=slow_loop,
         reconciler=reconciler,
         kill_switch=kill_switch,
+        enrichment=enrichment,
     )
 
     # ------------------------------------------------------------------
@@ -494,6 +536,7 @@ async def _run(
     # ------------------------------------------------------------------
     _shutdown_event: asyncio.Event = asyncio.Event()
     _tick_count_shared: int = 0  # updated by fast_loop_task; read by state_publisher
+    _current_slot_shared: int = _BASE_SLOT  # updated by fast_loop_task; read by slow_enrichment_task
 
     # ------------------------------------------------------------------
     # 7. Launch the FAST-loop asyncio task
@@ -504,7 +547,7 @@ async def _run(
         tick_count = 0
         log.info("FAST loop started (tick_interval=%.0fms)", fast_tick_s * 1000)
 
-        nonlocal _tick_count_shared
+        nonlocal _tick_count_shared, _current_slot_shared
         while not _shutdown_event.is_set():
             tick_start = time.monotonic()
 
@@ -519,6 +562,7 @@ async def _run(
 
             tick_count += 1
             _tick_count_shared = tick_count
+            _current_slot_shared = current_slot
 
             # Publish heartbeat / tick to FeedBus (non-blocking)
             open_positions = state_store.load_all_positions()
@@ -659,6 +703,48 @@ async def _run(
                 log.debug("state_publisher error: %s", exc)
 
         log.info("State publisher task exited.")
+
+    # ------------------------------------------------------------------
+    # 9b. SLOW-cadence enrichment task — drives the E17/E19 flag producers.
+    #
+    # OFF the FAST hot path by construction: this is a SEPARATE periodic task
+    # (every SLOW_ENRICHMENT_INTERVAL_S seconds), never called from
+    # fast_loop_task().  See orchestrator.run_slow_enrichment_tick() /
+    # aats/controller/enrichment_wiring.py.
+    # ------------------------------------------------------------------
+    async def slow_enrichment_task() -> None:
+        """Periodically re-probe sellability (E17) + check LP-unlock proximity
+        (E19) for every OPEN position, at SLOW-loop cadence (seconds-to-minutes).
+        """
+        interval_s = float(os.environ.get("SLOW_ENRICHMENT_INTERVAL_S", "5.0"))
+        log.info("Slow-enrichment task started (interval=%.1fs)", interval_s)
+        while not _shutdown_event.is_set():
+            await asyncio.sleep(interval_s)
+            if not state_store.load_all_positions():
+                continue  # nothing open — skip the probe entirely (no-op, cheap)
+            try:
+                result = orchestrator.run_slow_enrichment_tick(
+                    event_slot=_current_slot_shared
+                )
+                sellability_results = result.get("sellability", [])
+                lp_unlock_results = result.get("lp_unlock", [])
+                degraded = [r for r in sellability_results if getattr(r, "degraded", False)]
+                approaching = [
+                    d for d in lp_unlock_results if getattr(d, "raise_flag", False)
+                ]
+                if degraded or approaching:
+                    log.warning(
+                        "slow_enrichment: %d sellability_degraded, %d lp_unlock_approaching "
+                        "(flags set -> next FAST tick force-exits SECURE)",
+                        len(degraded),
+                        len(approaching),
+                    )
+            except Exception as exc:
+                # Non-fatal: an enrichment-tier failure must never crash the
+                # controller (it is de-risk-only and off the hot path).
+                log.error("slow_enrichment_task error: %s", exc, exc_info=True)
+
+        log.info("Slow-enrichment task exited.")
 
     # ------------------------------------------------------------------
     # 10. Control-plane HTTP server (uvicorn)
@@ -938,6 +1024,7 @@ async def _run(
         asyncio.create_task(fast_loop_task(), name="fast_loop"),
         _event_feed_task,
         asyncio.create_task(state_publisher_task(), name="state_pub"),
+        asyncio.create_task(slow_enrichment_task(), name="slow_enrichment"),
         asyncio.create_task(control_plane_task(), name="control_plane"),
     ]
 

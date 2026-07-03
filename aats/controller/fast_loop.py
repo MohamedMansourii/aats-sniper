@@ -23,8 +23,11 @@ OWNERSHIP:
 FAST LOOP CRITICAL PATH — NO LLM PROOF:
   The tick() method contains zero calls to any LLM client, zero imports of the
   reasoning module, and zero awaits on any coroutine that could block on a model.
-  The narrative_failure_flag is a pre-computed boolean READ from the StateStore
-  (written by the SLOW loop); the FAST loop never calls the LLM to compute it.
+  The narrative_failure_flag, insider_dump_flag, sellability_degraded_flag, and
+  lp_unlock_approaching_flag are ALL pre-computed booleans READ from the
+  StateStore (written by the SLOW loop / enrichment-tier producers in
+  aats.controller.enrichment_wiring); the FAST loop never runs detection, an
+  LLM, a sell-sim, or a schedule decode to compute any of them.
   The ExitEngine.on_tick() call is a PURE function (no IO, no network, no LLM).
 
 MONEY: integer lamports or Decimal.  Never float.
@@ -357,6 +360,14 @@ class FastLoop:
             # entry, so we exit SECURE while an exit is still possible.
             sellability_degraded = self._store.get_sellability_degraded_flag(mint)
 
+            # --- LP-unlock-approaching flag (E19; PRE-SET off-hot-path) ---
+            # A bare bool read — zero computation, no RPC, no schedule decode — exactly
+            # like the three flags above.  It can ONLY force an exit (de-risk): the
+            # SLOW-loop LP-unlock watcher found a time-locked LP's unlock slot
+            # approaching (or the schedule undecodable — refuse-by-default), so we
+            # exit SECURE while a pullable-LP window has not yet opened.
+            lp_unlock_approaching = self._store.get_lp_unlock_approaching_flag(mint)
+
             # --- ExitEngine evaluation (PURE function — no IO, no LLM, no network) ---
             exit_state = self._exit_states.get(mint)
             if exit_state is None:
@@ -370,6 +381,7 @@ class FastLoop:
                 narrative_failure_flag=narrative_failure,
                 insider_dump_flag=insider_dump,
                 sellability_degraded_flag=sellability_degraded,
+                lp_unlock_approaching_flag=lp_unlock_approaching,
             )
 
             # Update the exit state for the next tick (pure fold)

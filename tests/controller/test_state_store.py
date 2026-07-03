@@ -288,6 +288,79 @@ def test_sellability_degraded_flag_rejects_negative_event_slot(fake_clock):
         store.set_sellability_degraded_flag("MINT_S", reason="x", event_slot=-1)
 
 
+# --- E19 lp_unlock_approaching flag (mirrors sellability_degraded — same TTL
+# semantics).  2026-07-03 program review: this StateStore method DID NOT EXIST
+# (neither Protocol nor InMemoryStateStore) prior to this fix — E19 was
+# "doubly dead". These tests are the missing wiring proof. ---
+
+
+def test_lp_unlock_approaching_flag_absent_reads_false(fake_clock):
+    """E19: absent lp_unlock flag reads False, detail reads None — refuse-by-
+    default presence semantics identical to insider_dump/sellability_degraded."""
+    store = InMemoryStateStore(clock=fake_clock)
+    assert store.get_lp_unlock_approaching_flag("MINT_L") is False
+    assert store.get_lp_unlock_approaching_detail("MINT_L") is None
+
+
+def test_lp_unlock_approaching_flag_set_then_get(fake_clock):
+    """E19: set makes get True and carries the (reason, event_slot) payload."""
+    store = InMemoryStateStore(clock=fake_clock)
+    store.set_lp_unlock_approaching_flag(
+        "MINT_L", reason="lp_unlock_approaching", event_slot=999
+    )
+    assert store.get_lp_unlock_approaching_flag("MINT_L") is True
+    assert store.get_lp_unlock_approaching_detail("MINT_L") == ("lp_unlock_approaching", 999)
+
+
+def test_lp_unlock_approaching_flag_ttl_expiry(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    store.set_lp_unlock_approaching_flag(
+        "MINT_L", reason="lp_unlock_schedule_unknown", event_slot=1, ttl_seconds=3
+    )
+    assert store.get_lp_unlock_approaching_flag("MINT_L") is True
+    fake_clock.advance(3_000)
+    assert store.get_lp_unlock_approaching_flag("MINT_L") is False
+    assert store.get_lp_unlock_approaching_detail("MINT_L") is None
+
+
+def test_lp_unlock_approaching_flag_default_ttl_120s(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    store.set_lp_unlock_approaching_flag(
+        "MINT_L", reason="lp_unlock_approaching", event_slot=1
+    )
+    fake_clock.advance(119_000)
+    assert store.get_lp_unlock_approaching_flag("MINT_L") is True
+    fake_clock.advance(2_000)
+    assert store.get_lp_unlock_approaching_flag("MINT_L") is False
+
+
+def test_lp_unlock_approaching_flag_isolated_per_mint(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    store.set_lp_unlock_approaching_flag(
+        "MINT_A", reason="lp_unlock_approaching", event_slot=1
+    )
+    assert store.get_lp_unlock_approaching_flag("MINT_A") is True
+    assert store.get_lp_unlock_approaching_flag("MINT_B") is False
+
+
+def test_lp_unlock_approaching_flag_rejects_empty_reason(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    with pytest.raises(ValueError):
+        store.set_lp_unlock_approaching_flag("MINT_L", reason="", event_slot=1)
+
+
+def test_lp_unlock_approaching_flag_rejects_bool_event_slot(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    with pytest.raises(TypeError):
+        store.set_lp_unlock_approaching_flag("MINT_L", reason="x", event_slot=True)
+
+
+def test_lp_unlock_approaching_flag_rejects_negative_event_slot(fake_clock):
+    store = InMemoryStateStore(clock=fake_clock)
+    with pytest.raises(ValueError):
+        store.set_lp_unlock_approaching_flag("MINT_L", reason="x", event_slot=-1)
+
+
 def test_concurrent_claim_atomicity():
     """Concurrent claim_entering across 100 threads yields exactly one winner."""
     store = InMemoryStateStore()
