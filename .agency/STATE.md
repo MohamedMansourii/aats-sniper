@@ -71,7 +71,11 @@ integrated-live **and** GATE-A/GATE-B on the RECORDED corpus yield **GO/NO-GO**.
 4. LLM/heavy models never on FAST/SNIPE (SLOW-loop; hot branch reads a pre-set flag).
 5. Point-in-time (T-300a): on-chain event-time only; no wall-clock in decision fields; no lookahead.
 6. Money int lamports/Decimal; no secrets in code/logs; custody = capped hot wallet + isolated Vault signer.
-7. Dual-G3 mandatory (code-reviewer AND backtest-qa PASS) **+ write the acceptance artifact**. Three strikes → re-plan.
+7. Dual-G3 mandatory (code-reviewer AND backtest-qa PASS) **+ write the acceptance artifact** under `.agency/05-reports/`. Three strikes → HALT the wave + escalate (do not silently continue).
+8. **STANDING E2E GATE** (added after the 2026-07-03 review caught unwired exits): any feature that must ACT in a
+   live loop — an exit branch, a flag producer, a gate consumer — is **NOT** G3-PASS on unit tests alone; it needs
+   an END-TO-END integration test proving it fires in the running controller loop. "Green unit tests ≠ wired live."
+9. **Every wave appends one JSON line to `loop-run-log.md`** and reconciles the companion docs to this STATE.
 
 ## 5 · HOW TO DISPATCH
 - Ready scripts: `.agency/04-plan/workflows/{wave3-chartpath,wave4-detection}.js`. Copy the runner for Wave 2C.
@@ -81,7 +85,11 @@ integrated-live **and** GATE-A/GATE-B on the RECORDED corpus yield **GO/NO-GO**.
   is why the acceptance gate's "must be 0" is wrong; the correct check excludes docstrings).
 
 ## 6 · POINTERS
+- **Loop governance (AATS is now a registered L2 loop — SIM+BUILD ONLY):** `C:\dev\aats\LOOP.md` (constitution:
+  denylist + human gates + dispatch discipline) · `loop-budget.md` (caps + kill-switch) · `loop-run-log.md`
+  (append one JSON line per wave) · registered in `~/.claude/loops/CONTROL-PLANE.md`.
 - Program review (honest verdict + findings): `.agency/05-reports/review/PROGRAM-REVIEW-2026-07-03.md`
+- Methodology review (loop/swarm compliance): `.agency/05-reports/review/METHODOLOGY-REVIEW-2026-07-03.md`
 - Missions/points: `MISSION-BOARD.md` (⚠️ being reconciled) · Architecture: `ELITE-ARCHITECTURE.md` ·
   Milestones/rewards: `MILESTONES-ACCEPTANCE-REWARDS.md` · Directive/thesis: `00-brief/ELITE-ENHANCEMENT-DIRECTIVE.md`
 
