@@ -43,6 +43,7 @@ def _rand_inputs(rng: random.Random, *, force_complete: bool = True) -> SafetyIn
         lp_locked_or_burned_bps=rng.randint(0, 10_000),
         dev_bundle_cluster_bps=rng.randint(0, 10_000),
         holder_concentration_top10_bps=rng.randint(0, 10_000),
+        holder_count=rng.randint(0, 500),  # E18 — spans below/above the floor
         sell_tax_bps=rng.randint(0, 10_000),
         buy_tax_bps=rng.randint(0, 10_000),
         authorities_decoded=True if force_complete else rng.random() < 0.8,
@@ -102,6 +103,7 @@ def test_P3_incomplete_input_always_rejects():
         "lp_locked_or_burned_bps",
         "dev_bundle_cluster_bps",
         "holder_concentration_top10_bps",
+        "holder_count",  # E18 — undecoded holder count also refuses-by-default
         "sell_tax_bps",
         "buy_tax_bps",
     ]

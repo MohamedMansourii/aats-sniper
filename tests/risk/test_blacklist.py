@@ -93,6 +93,7 @@ def _clean_inputs(**overrides) -> SafetyInputs:
         "lp_locked_or_burned_bps": 10_000,
         "dev_bundle_cluster_bps": 500,
         "holder_concentration_top10_bps": 2_000,
+        "holder_count": 50,  # E18: above the distinct-holder floor
         "sell_tax_bps": 0,
         "buy_tax_bps": 0,
         "authorities_decoded": True,

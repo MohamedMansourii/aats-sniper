@@ -55,6 +55,7 @@ _CLEAN_BASE = {
     "lp_locked_or_burned_bps": 10_000,  # 100% burned
     "dev_bundle_cluster_bps": 500,  # 5%
     "holder_concentration_top10_bps": 2_000,  # 20%
+    "holder_count": 50,  # E18: above the distinct-holder floor (clean baseline)
     "sell_tax_bps": 0,
     "buy_tax_bps": 0,
     "authorities_decoded": True,

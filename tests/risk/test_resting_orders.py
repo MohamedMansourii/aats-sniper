@@ -190,6 +190,7 @@ def _clean_safety_inputs() -> SafetyInputs:
         lp_locked_or_burned_bps=10_000,  # fully locked
         dev_bundle_cluster_bps=500,  # 5% — under cap
         holder_concentration_top10_bps=1_500,  # 15% — under cap
+        holder_count=50,  # E18: above the distinct-holder floor
         sell_tax_bps=0,
         buy_tax_bps=0,
         authorities_decoded=True,
@@ -598,6 +599,7 @@ def test_denylisted_mint_rejected_pre_gate_on_live_entry_chain(tmp_path):
         lp_locked_or_burned_bps=10_000,
         dev_bundle_cluster_bps=0,
         holder_concentration_top10_bps=0,
+        holder_count=50,  # E18: above the distinct-holder floor
         sell_tax_bps=0,
         buy_tax_bps=0,
     )
@@ -663,6 +665,7 @@ def test_denylist_wired_through_order_book_evaluate_tick(tmp_path):
         lp_locked_or_burned_bps=10_000,
         dev_bundle_cluster_bps=0,
         holder_concentration_top10_bps=0,
+        holder_count=50,  # E18: above the distinct-holder floor
         sell_tax_bps=0,
         buy_tax_bps=0,
     )
@@ -722,6 +725,7 @@ def test_denylist_membership_is_point_in_time_on_entry_chain(tmp_path):
         lp_locked_or_burned_bps=10_000,
         dev_bundle_cluster_bps=0,
         holder_concentration_top10_bps=0,
+        holder_count=50,  # E18: above the distinct-holder floor
         sell_tax_bps=0,
         buy_tax_bps=0,
     )

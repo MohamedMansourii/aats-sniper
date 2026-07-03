@@ -112,6 +112,7 @@ def make_clean_safety_inputs(mint: str = _NORMAL_MINT) -> SafetyInputs:
         lp_locked_or_burned_bps=10_000,  # 100% locked
         dev_bundle_cluster_bps=500,      # 5% cluster
         holder_concentration_top10_bps=2_000,  # 20% top-10
+        holder_count=50,  # E18: above the distinct-holder floor
         sell_tax_bps=50,
         buy_tax_bps=50,
         authorities_decoded=True,

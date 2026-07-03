@@ -41,6 +41,7 @@ def _clean_inputs(**overrides) -> SafetyInputs:
         "lp_locked_or_burned_bps": 10_000,  # 100% burned
         "dev_bundle_cluster_bps": 500,  # 5%
         "holder_concentration_top10_bps": 2_000,  # 20%
+        "holder_count": 50,  # E18: well above the distinct-holder floor
         "sell_tax_bps": 0,
         "buy_tax_bps": 0,
         "authorities_decoded": True,
@@ -155,6 +156,7 @@ def test_scan_all_surfaces_every_red_flag():
         "lp_locked_or_burned_bps",
         "dev_bundle_cluster_bps",
         "holder_concentration_top10_bps",
+        "holder_count",  # E18 — undecoded holder count refuses-by-default
         "sell_tax_bps",
         "buy_tax_bps",
     ],
@@ -312,3 +314,92 @@ def test_gate_constructs_no_intent_and_holds_no_entry_path():
         ), f"gate exposes a risk-increasing surface matching {forbidden!r}: {public}"
     # And the one allowed 'entry' surface is a pure bool predicate (de-risk only):
     assert gate.require_enabled_for_entry(gate.evaluate_fast(_clean_inputs())) in (True, False)
+
+
+# ---------------------------------------------------------------------------
+# E18 — MINIMUM distinct-holder floor (a handful of holders is a dump trap even
+# below the MAX-concentration cap).  De-risk / reject-only / refuse-by-default.
+# ---------------------------------------------------------------------------
+
+
+def test_below_holder_floor_rejects():
+    """A token with too FEW distinct holders is a concentration/dump trap and is
+    REJECTED — even though its top-10 concentration is under the max cap."""
+    th = SafetyThresholds()  # default floor
+    gate = PreTradeSafetyGate(thresholds=th)
+    dec = gate.evaluate_fast(_clean_inputs(holder_count=th.min_distinct_holders - 1))
+    assert not dec.passed
+    assert dec.verdict is GateVerdict.REJECT
+    assert dec.red_flags[0].flag is RedFlag.HOLDER_COUNT_TOO_LOW
+    # The measured value and the floor it violated are carried (ints) for the UI.
+    assert dec.red_flags[0].measured == th.min_distinct_holders - 1
+    assert dec.red_flags[0].threshold == th.min_distinct_holders
+    assert RedFlag.HOLDER_COUNT_TOO_LOW.value in dec.red_flag_codes
+
+
+def test_at_or_above_holder_floor_passes():
+    """Exactly at the floor passes; comfortably above passes.  The floor is a
+    reject-only veto — it sizes/triggers nothing on a pass (the pass is silent)."""
+    th = SafetyThresholds()
+    gate = PreTradeSafetyGate(thresholds=th)
+    at_floor = gate.evaluate_fast(_clean_inputs(holder_count=th.min_distinct_holders))
+    assert at_floor.passed and at_floor.red_flags == ()
+    above = gate.evaluate_fast(_clean_inputs(holder_count=th.min_distinct_holders + 500))
+    assert above.passed
+
+
+def test_holder_floor_boundary_is_exact():
+    """Int boundary: floor-1 rejects, floor passes (no off-by-one, no float)."""
+    th = SafetyThresholds()
+    gate = PreTradeSafetyGate(thresholds=th)
+    assert not gate.evaluate_fast(
+        _clean_inputs(holder_count=th.min_distinct_holders - 1)
+    ).passed
+    assert gate.evaluate_fast(_clean_inputs(holder_count=th.min_distinct_holders)).passed
+
+
+def test_undecoded_holder_count_refuses_by_default():
+    """holder_count=None (could not decode) REJECTS as INPUT_INCOMPLETE — an
+    unread holder set is NEVER assumed well-distributed (refuse-by-default)."""
+    gate = PreTradeSafetyGate()
+    dec = gate.evaluate_fast(_clean_inputs(holder_count=None))
+    assert not dec.passed
+    assert dec.red_flags[0].flag is RedFlag.INPUT_INCOMPLETE
+
+
+def test_holder_floor_is_tighten_only_de_risk():
+    """RAISING the floor can only turn a PASS into a REJECT, never the reverse:
+    a token that passes a strict floor must also pass every looser floor."""
+    holders = 30
+    inp = _clean_inputs(holder_count=holders)
+    loose = PreTradeSafetyGate(thresholds=SafetyThresholds(min_distinct_holders=5))
+    strict = PreTradeSafetyGate(thresholds=SafetyThresholds(min_distinct_holders=holders + 1))
+    assert loose.evaluate_fast(inp).passed  # comfortably above the loose floor
+    # The stricter floor (above the token's count) rejects MORE — never fewer.
+    strict_dec = strict.evaluate_fast(inp)
+    assert not strict_dec.passed
+    assert strict_dec.red_flags[0].flag is RedFlag.HOLDER_COUNT_TOO_LOW
+
+
+def test_holder_floor_is_in_hot_check_order_after_concentration():
+    """The floor lives on the hot path, ordered right after the concentration
+    check (both holder-distribution vetoes) and before the tax checks."""
+    order = list(HOT_CHECK_ORDER)
+    assert RedFlag.HOLDER_COUNT_TOO_LOW in order
+    assert order.index(RedFlag.HOLDER_COUNT_TOO_LOW) == (
+        order.index(RedFlag.HOLDER_CONCENTRATION_HIGH) + 1
+    )
+    assert order.index(RedFlag.HOLDER_COUNT_TOO_LOW) < order.index(RedFlag.SELL_TAX_TOO_HIGH)
+
+
+def test_negative_holder_count_refused_at_construction():
+    """A negative distinct-holder count is impossible on-chain — refused at
+    construction (fail-closed), never silently coerced."""
+    with pytest.raises(ValueError):
+        _clean_inputs(holder_count=-1)
+
+
+def test_float_holder_count_refused_at_construction():
+    """holder_count is an int COUNT — a float is refused (data-models.md §0)."""
+    with pytest.raises(TypeError):
+        _clean_inputs(holder_count=50.0)  # type: ignore[arg-type]

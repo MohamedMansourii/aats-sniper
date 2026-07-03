@@ -699,6 +699,11 @@ class ExitReason(StrEnum):
     NARRATIVE_FAILURE = "narrative_failure"  # (iii) LLM catastrophic exit (highest)
     INSIDER_DUMP = "insider_dump"  # (iii') insider/dev-sell dump — catastrophic exit
     SELLABILITY_DEGRADED = "sellability_degraded"  # (iii'') delayed-honeypot/tax-flip re-probe
+    # (iii''') E19 — TIME-LOCKED LP unlock approaching (pullable-LP window = rising rug
+    # risk).  A PRE-SET flag produced off the hot path by the SLOW-loop LP-unlock
+    # watcher (aats.risk.lp_unlock_gate); the FAST branch only READS the bool and can
+    # ONLY force a full SECURE exit — de-risk only.
+    LP_UNLOCK_APPROACHING = "lp_unlock_approaching"
     HARD_STOP = "hard_stop"  # (i)  fixed-at-entry stop breach
     RATCHET_STOP = "ratchet_stop"  # profit-lock ratchet floor breach (de-risk)
     TRAILING_STOP = "trailing_stop"  # trailing floor breach (de-risk, full remainder)
@@ -760,6 +765,7 @@ class ExitEngine:
         (iii) narrative_failure       -> FULL exit of remainder (SECURE)     [highest]
         (iii')insider/dev-sell dump   -> FULL exit of remainder (SECURE) [rug-in-progress]
         (iii'')sellability degraded   -> FULL exit of remainder (SECURE) [delayed honeypot]
+        (iii''')lp unlock approaching -> FULL exit of remainder (SECURE) [pullable-LP window]
         (i)   hard stop breach        -> FULL exit of remainder (SECURE)
         (i'') profit-lock ratchet     -> FULL exit of remainder (SECURE) [locked floor]
         (i')  trailing breach         -> FULL exit of remainder (SECURE) [de-risk runner]
@@ -794,9 +800,20 @@ class ExitEngine:
     other catastrophic flags the FAST branch runs no sell-sim/RPC/detection and can
     ONLY force a full SECURE exit — exit while an exit is still possible.
 
-    A forced/defensive exit (narrative / insider-dump / hard-stop / trailing /
-    timeout) ALWAYS routes SECURE (private) so a defensive exit is never
-    sandwiched.  Only the gain-booking TP scale-out uses the config's routing.
+    The LP-UNLOCK-APPROACHING exit (iii''', E19) sits just BELOW the sellability
+    signal and ABOVE the mechanical hard stop: a TIME-LOCKED (not burned) LP whose
+    scheduled unlock slot falls within the near horizon opens a PULLABLE-LP window —
+    the deployer can pull liquidity the instant the lock releases (a rising rug
+    risk).  The SLOW-loop LP-unlock watcher (`aats.risk.lp_unlock_gate`) measures the
+    unlock-slot proximity in EVENT-TIME slots OFF the hot path and, when the unlock
+    approaches (or the schedule is undecodable — refuse-by-default), pre-sets the
+    bool this branch reads.  Like the other catastrophic flags the FAST branch runs
+    no schedule decode/RPC here and can ONLY force a full SECURE exit — never hold
+    longer, widen/relax a stop, or size up.
+
+    A forced/defensive exit (narrative / insider-dump / sellability / lp-unlock /
+    hard-stop / trailing / timeout) ALWAYS routes SECURE (private) so a defensive
+    exit is never sandwiched.  Only the gain-booking TP scale-out uses config routing.
     """
 
     def __init__(self, *, config: ExitConfig, factory: DeRiskIntentFactory | None = None) -> None:
@@ -814,6 +831,7 @@ class ExitEngine:
         narrative_failure_flag: bool = False,
         insider_dump_flag: bool = False,
         sellability_degraded_flag: bool = False,
+        lp_unlock_approaching_flag: bool = False,
         narrative_score: Decimal | int | str | None = None,
     ) -> ExitDecision:
         """Evaluate the ordered hierarchy for one open position at one tick.
@@ -853,6 +871,18 @@ class ExitEngine:
         token may have become unsellable AFTER entry: like the other catastrophic
         flags it can ONLY force a full SECURE exit (exit while an exit is still
         possible) — never hold longer, widen/relax a stop, or size up.
+
+        `lp_unlock_approaching_flag` (E19) is a PRE-SET boolean produced OFF the hot
+        path by the SLOW-loop LP-unlock watcher
+        (`aats.risk.lp_unlock_gate.LpUnlockExitWatcher`), which measures a TIME-LOCKED
+        LP's unlock-slot proximity in EVENT-TIME slots and, when the unlock approaches
+        (or the schedule is undecodable — refuse-by-default => raise), writes
+        `StateStore.set_lp_unlock_approaching_flag`.  The caller reads
+        `StateStore.get_lp_unlock_approaching_flag(mint)` — a bare bool — exactly like
+        the flags above.  The FAST branch only READS the bool; it runs NO schedule
+        decode, RPC, or detection here.  A pullable-LP window is a rising rug risk:
+        like the other catastrophic flags it can ONLY force a full SECURE exit — never
+        hold longer, widen/relax a stop, or size up.
         """
         if isinstance(block_time_ms, bool | float):
             raise TypeError("block_time_ms must be int (event-time ms), not float/bool.")
@@ -865,6 +895,10 @@ class ExitEngine:
         if not isinstance(sellability_degraded_flag, bool):
             raise TypeError(
                 "sellability_degraded_flag must be a plain bool (a pre-set de-risk flag)."
+            )
+        if not isinstance(lp_unlock_approaching_flag, bool):
+            raise TypeError(
+                "lp_unlock_approaching_flag must be a plain bool (a pre-set de-risk flag)."
             )
         narr_score = self._coerce_narrative_score(narrative_score)
 
@@ -950,6 +984,30 @@ class ExitEngine:
                 detail="sellability_degraded flag pre-set off-hot-path (SLOW-loop "
                 "sell-sim re-probe: delayed honeypot / tax-flip / inconclusive-refuse); "
                 "exit while an exit is still possible",
+            )
+
+        # (iii''') LP-UNLOCK-APPROACHING (E19).  Reads a PRE-SET flag produced OFF the
+        # hot path by the SLOW-loop LP-unlock watcher (`aats.risk.lp_unlock_gate` ->
+        # `StateStore.set_lp_unlock_approaching_flag`), which measures a TIME-LOCKED
+        # LP's unlock-slot proximity in EVENT-TIME slots; the FAST branch NEVER runs a
+        # schedule decode, an RPC, or detection here — it reads a plain bool exactly
+        # like the flags above.  A time-locked LP whose unlock approaches (or whose
+        # schedule is undecodable => refuse-by-default => raise) opens a PULLABLE-LP
+        # window: the deployer can pull liquidity the instant it unlocks (rising rug
+        # risk).  Force a FULL flatten of the remainder (SECURE) while an exit is still
+        # possible, and short-circuit.  Placed in the catastrophic tier just below the
+        # sellability signal and ABOVE the mechanical hard stop (exit on the unlock
+        # window, not after the LP is pulled and the price collapses).  De-risk only —
+        # like the flags above it can ONLY force an exit; never hold longer, widen/relax
+        # a stop, or size up.
+        if lp_unlock_approaching_flag:
+            return self._full_exit(
+                stepped,
+                block_time_ms=block_time_ms,
+                reason=ExitReason.LP_UNLOCK_APPROACHING,
+                detail="lp_unlock_approaching flag pre-set off-hot-path (SLOW-loop "
+                "LP-unlock watcher: time-locked LP unlock within near horizon / "
+                "undecodable schedule); pullable-LP window is a rising rug risk",
             )
 
         # (i) MANDATORY HARD STOP — the FIXED-at-entry T-321 trigger.  We reuse the

@@ -50,6 +50,7 @@ def _clean(slot: int = 1000) -> SafetyInputs:
         lp_locked_or_burned_bps=10_000,
         dev_bundle_cluster_bps=400,
         holder_concentration_top10_bps=1_800,
+        holder_count=50,  # E18: above the distinct-holder floor
         sell_tax_bps=0,
         buy_tax_bps=0,
         authorities_decoded=True,

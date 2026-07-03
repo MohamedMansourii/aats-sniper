@@ -78,6 +78,11 @@ class RedFlag(StrEnum):
     LP_NOT_LOCKED_OR_BURNED = "lp_not_locked_or_burned"  # 3
     DEV_OR_BUNDLE_CLUSTER = "dev_or_bundle_cluster"  # 4
     HOLDER_CONCENTRATION_HIGH = "holder_concentration_high"  # 4b
+    # E18 — MINIMUM distinct-holder floor.  Too FEW distinct (non-LP, non-burn)
+    # holders is a concentration/dump trap even UNDER the max-concentration cap:
+    # a handful of wallets IS the entire float.  This is a de-risk (tighten-only)
+    # veto — a stricter floor rejects MORE, never fewer; it sizes/forces nothing.
+    HOLDER_COUNT_TOO_LOW = "holder_count_too_low"  # 4c
     SELL_TAX_TOO_HIGH = "sell_tax_too_high"  # 5
     BUY_TAX_TOO_HIGH = "buy_tax_too_high"  # 5b
     # E2 — file-backed denylist pre-filter (runs BEFORE the hot checks).
@@ -106,6 +111,18 @@ class RedFlag(StrEnum):
     # exhausted before reaching a confirmed inbound-funding transaction).
     # Unknown is NEVER treated as "established/safe" — see dev_funding_age.py.
     DEV_FUNDING_UNDECODABLE = "dev_funding_undecodable"  # 0e
+    # E19 — LP-unlock-approaching pre-gate veto for TIME-LOCKED (not burned) LPs
+    # (aats/risk/lp_unlock_gate.py).  A time-locked LP whose scheduled unlock slot
+    # falls within the near horizon (measured in EVENT-TIME SLOTS, never wall-clock)
+    # is a rising rug window — the deployer can PULL the LP the instant it unlocks —
+    # and is an instant, pre-gate REJECT.  A unlock in the wider band DOWN-WEIGHTS
+    # conviction instead (see the gate module); it never appears as a red flag alone.
+    # A BURNED LP has no unlock and is never flagged by this check.
+    LP_UNLOCK_IMMINENT = "lp_unlock_imminent"  # 0f — time-locked LP unlock within near horizon
+    # Refuse-by-default: the LP unlock schedule could not be conclusively decoded
+    # (undecodable locker, or a time-lock carrying no readable unlock slot).  Unknown
+    # is NEVER treated as "safe/far-off/burned" — see lp_unlock_gate.py.
+    LP_UNLOCK_SCHEDULE_UNKNOWN = "lp_unlock_schedule_unknown"  # 0g
     # Refuse-by-default conditions (input could not be evaluated in budget):
     INPUT_STALE = "input_stale"  # data older than the staleness budget
     INPUT_INCOMPLETE = "input_incomplete"  # a required field was missing/unknown
@@ -122,6 +139,7 @@ HOT_CHECK_ORDER: tuple[RedFlag, ...] = (
     RedFlag.LP_NOT_LOCKED_OR_BURNED,
     RedFlag.DEV_OR_BUNDLE_CLUSTER,
     RedFlag.HOLDER_CONCENTRATION_HIGH,
+    RedFlag.HOLDER_COUNT_TOO_LOW,
     RedFlag.SELL_TAX_TOO_HIGH,
     RedFlag.BUY_TAX_TOO_HIGH,
 )
@@ -150,6 +168,12 @@ class SafetyThresholds:
     min_lp_locked_bps: int = 9_500
     # Max top-10 holder concentration (bps).  Above this => cluster/dump risk.
     max_holder_concentration_top10_bps: int = 3_500  # 35%
+    # E18 — MINIMUM distinct (non-LP, non-burn) holder floor.  BELOW this a token
+    # is a concentration/dump trap even UNDER the max-concentration cap: a handful
+    # of wallets IS the entire float, so any single exit dumps it.  Tighten-only /
+    # de-risk knob — RAISING the floor rejects MORE, never fewer.  Int COUNT (never
+    # float/bps).  Refuse-by-default: an undecoded holder_count REJECTS (see below).
+    min_distinct_holders: int = 10
     # Max single-cluster (dev/bundle/sniper) holding (bps).
     max_dev_bundle_cluster_bps: int = 2_000  # 20%
     # Max sell tax (bps).  Above this the token is effectively a honeypot on exit.
@@ -164,6 +188,7 @@ class SafetyThresholds:
         for name in (
             "min_lp_locked_bps",
             "max_holder_concentration_top10_bps",
+            "min_distinct_holders",
             "max_dev_bundle_cluster_bps",
             "max_sell_tax_bps",
             "max_buy_tax_bps",
@@ -232,6 +257,15 @@ class SafetyInputs:
     # "unknown" (not decoded).  Refuse-by-default: not decoded => reject.
     authorities_decoded: bool = True
 
+    # 4c. E18 — distinct (non-LP, non-burn) holder COUNT at event_time
+    #     (MicrostructureFeatures.holder_count).  An int count, or None when it
+    #     could not be decoded in budget.  Refuse-by-default: None => the gate
+    #     trips INPUT_INCOMPLETE and REJECTS — a token whose holder set could not
+    #     be read is NEVER assumed well-distributed.  Defaults to None so a
+    #     producer that omits it fails CLOSED (no trade), never open.  Adversarial:
+    #     FEWER holders LOWERS safety (a handful of wallets is the whole float).
+    holder_count: int | None = None
+
     def __post_init__(self) -> None:
         # No float money — int bps / int ms only on the numeric fields.
         _INT_FIELDS = (
@@ -259,6 +293,15 @@ class SafetyInputs:
                     f"SafetyInputs.{name} must be int bps or None, got float {val!r} "
                     "(data-models.md §0)."
                 )
+        # holder_count is a COUNT (not bps): int or None, never float, never negative.
+        if self.holder_count is not None:
+            if isinstance(self.holder_count, float):
+                raise TypeError(
+                    f"SafetyInputs.holder_count must be int (count) or None, got float "
+                    f"{self.holder_count!r} (data-models.md §0)."
+                )
+            if self.holder_count < 0:
+                raise ValueError("SafetyInputs.holder_count must be non-negative or None.")
         if self.event_block_time_ms <= 0:
             raise ValueError("SafetyInputs.event_block_time_ms must be > 0 (real on-chain time).")
         if self.data_staleness_ms < 0:
@@ -506,6 +549,20 @@ class PreTradeSafetyGate:
                     RedFlag.HOLDER_CONCENTRATION_HIGH,
                     v,
                     self.thresholds.max_holder_concentration_top10_bps,
+                )
+            return None
+
+        if flag is RedFlag.HOLDER_COUNT_TOO_LOW:
+            v = inputs.holder_count
+            if v is None:
+                # Refuse-by-default: an undecoded holder set is NEVER read as safe.
+                return RedFlagHit(RedFlag.INPUT_INCOMPLETE, None, None)
+            # Too FEW distinct holders => concentration/dump trap.  Pure O(1)
+            # integer comparison (0 RPC) — hot-path safe.  De-risk only: a lower
+            # count REJECTS, it never sizes or widens anything.
+            if v < self.thresholds.min_distinct_holders:
+                return RedFlagHit(
+                    RedFlag.HOLDER_COUNT_TOO_LOW, v, self.thresholds.min_distinct_holders
                 )
             return None
 

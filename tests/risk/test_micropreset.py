@@ -63,6 +63,7 @@ def _clean_inputs() -> SafetyInputs:
         lp_locked_or_burned_bps=BPS_DENOM,  # 100% locked
         dev_bundle_cluster_bps=1_000,  # 10% < 20%
         holder_concentration_top10_bps=1_500,  # 15% < 20% MICRO ceiling
+        holder_count=50,  # E18: above the distinct-holder floor
         sell_tax_bps=0,
         buy_tax_bps=0,
         authorities_decoded=True,
@@ -213,6 +214,7 @@ def test_lp_fraction_not_fully_locked_rejects():
         lp_locked_or_burned_bps=9_600,  # 96% — passes default, fails MICRO 100%
         dev_bundle_cluster_bps=1_000,
         holder_concentration_top10_bps=1_500,
+        holder_count=50,  # E18: above the distinct-holder floor
         sell_tax_bps=0,
         buy_tax_bps=0,
     )
@@ -252,6 +254,7 @@ def test_micro_is_superset_of_default_rejections(field, value):
         "lp_locked_or_burned_bps": base.lp_locked_or_burned_bps,
         "dev_bundle_cluster_bps": base.dev_bundle_cluster_bps,
         "holder_concentration_top10_bps": base.holder_concentration_top10_bps,
+        "holder_count": base.holder_count,
         "sell_tax_bps": base.sell_tax_bps,
         "buy_tax_bps": base.buy_tax_bps,
     }
