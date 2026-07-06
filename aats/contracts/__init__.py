@@ -73,6 +73,10 @@ from aats.contracts.models import (
     MCSScore,
     ReasoningAction,
     ReasoningVerdict,
+    RegimeDeRiskDirective,
+    RegimeSignal,
+    RegimeState,
+    regime_derisk_directive,
 )
 from aats.contracts.positions import (
     FSMState,
@@ -121,6 +125,10 @@ __all__ = [
     "MCSScore",
     "ReasoningAction",
     "ReasoningVerdict",
+    "RegimeDeRiskDirective",
+    "RegimeSignal",
+    "RegimeState",
+    "regime_derisk_directive",
     # intents
     "CostStack",
     "EntryIntent",

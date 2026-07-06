@@ -1,0 +1,194 @@
+{
+  "class_counts": {
+    "ACCUMULATION": 222,
+    "DISTRIBUTION": 987,
+    "NEUTRAL": 836,
+    "RUG_IN_PROGRESS": 955
+  },
+  "class_order": [
+    "ACCUMULATION",
+    "NEUTRAL",
+    "DISTRIBUTION",
+    "RUG_IN_PROGRESS"
+  ],
+  "covariate_columns": [
+    "lp_depth_lamports",
+    "holder_count",
+    "holder_concentration_top10_bps",
+    "sell_tax_bps",
+    "sniper_cluster_score",
+    "first_k_buy_pressure",
+    "first_k_unique_buyers",
+    "rsi",
+    "rsi_present",
+    "macd",
+    "macd_present",
+    "bb_width",
+    "bb_width_present",
+    "smart_wallets_in",
+    "smart_wallet_entry_lag_slots",
+    "smart_wallet_entry_lag_present",
+    "mcs_conviction",
+    "mcs_momentum",
+    "mcs_novelty",
+    "mcs_synchronicity",
+    "mcs_account_age_median_days",
+    "mcs_coordinated_shill_flag",
+    "mcs_present",
+    "creator_outflow_velocity_bps",
+    "creator_outflow_velocity_present"
+  ],
+  "deep_model_dep": "pytorch-forecasting",
+  "is_bootstrap_not_real": true,
+  "leak_audit_summary": "LEAK AUDIT PASS: 3000 rows. For every row: feature_event_time <= decision_event_time (equal by event-time join), AND label resolution_event_time strictly > decision_event_time (label horizon proof present). No feature reads post-decision data; the label is the only forward-looking quantity and it lives in a separate dataset joined by event_time only.",
+  "loop": "slow",
+  "model_version": "regime-lgbm-mc-v1.0.0-seed20260706-BOOTSTRAP",
+  "model_vs_baseline_test": {
+    "baseline_macro_ovr_auc": 0.6895134714575235,
+    "baseline_multiclass_logloss": 1.714532598176349,
+    "edge_macro_ovr_auc": 0.0866734941203493,
+    "model_macro_ovr_auc": 0.7761869655778728,
+    "model_multiclass_logloss": 1.1000820098798332
+  },
+  "n_calib": 450,
+  "n_test": 750,
+  "n_train": 1800,
+  "no_capital_license": true,
+  "per_class_calibration": [
+    {
+      "brier": 0.04900949262627099,
+      "class": "ACCUMULATION",
+      "ece": 0.0,
+      "in_tolerance": true,
+      "method": "isotonic"
+    },
+    {
+      "brier": 0.15946946274421628,
+      "class": "NEUTRAL",
+      "ece": 5.3475742352778376e-17,
+      "in_tolerance": true,
+      "method": "isotonic"
+    },
+    {
+      "brier": 0.1506154897475685,
+      "class": "DISTRIBUTION",
+      "ece": 5.711480671127195e-17,
+      "in_tolerance": true,
+      "method": "isotonic"
+    },
+    {
+      "brier": 0.21246566276821702,
+      "class": "RUG_IN_PROGRESS",
+      "ece": 2.3561399744822767e-17,
+      "in_tolerance": true,
+      "method": "isotonic"
+    }
+  ],
+  "regime_model_swap_point": "aats.models.train_regime._fit_regime_head",
+  "rolling_monitor": {
+    "consecutive_no_signal_to_disable": 2,
+    "disabled": false,
+    "min_edge_auc": 0.02,
+    "windows": [
+      {
+        "baseline_macro_auc": 0.6968005025863355,
+        "edge_auc": 0.07891957804883709,
+        "model_macro_auc": 0.7757200806351726,
+        "n": 250,
+        "no_signal": false
+      },
+      {
+        "baseline_macro_auc": 0.6920963586449143,
+        "edge_auc": 0.10830303106291173,
+        "model_macro_auc": 0.800399389707826,
+        "n": 250,
+        "no_signal": false
+      },
+      {
+        "baseline_macro_auc": 0.6795485219025754,
+        "edge_auc": 0.0759185568983145,
+        "model_macro_auc": 0.7554670788008899,
+        "n": 250,
+        "no_signal": false
+      }
+    ]
+  },
+  "seed": 20260706,
+  "taxonomy_version": "1.0.0",
+  "test_fold_calibration": {
+    "multiclass_brier": 0.5837100359990635,
+    "reliability_bins": [
+      {
+        "bin_lower": 0.0,
+        "bin_upper": 0.1,
+        "count": 0,
+        "empirical_frequency": NaN,
+        "mean_predicted": 0.05
+      },
+      {
+        "bin_lower": 0.1,
+        "bin_upper": 0.2,
+        "count": 0,
+        "empirical_frequency": NaN,
+        "mean_predicted": 0.15000000000000002
+      },
+      {
+        "bin_lower": 0.2,
+        "bin_upper": 0.30000000000000004,
+        "count": 0,
+        "empirical_frequency": NaN,
+        "mean_predicted": 0.25
+      },
+      {
+        "bin_lower": 0.30000000000000004,
+        "bin_upper": 0.4,
+        "count": 68,
+        "empirical_frequency": 0.4117647058823529,
+        "mean_predicted": 0.37211785364123134
+      },
+      {
+        "bin_lower": 0.4,
+        "bin_upper": 0.5,
+        "count": 223,
+        "empirical_frequency": 0.4484304932735426,
+        "mean_predicted": 0.46297835044515356
+      },
+      {
+        "bin_lower": 0.5,
+        "bin_upper": 0.6000000000000001,
+        "count": 258,
+        "empirical_frequency": 0.5930232558139535,
+        "mean_predicted": 0.5470904984401057
+      },
+      {
+        "bin_lower": 0.6000000000000001,
+        "bin_upper": 0.7000000000000001,
+        "count": 148,
+        "empirical_frequency": 0.6824324324324325,
+        "mean_predicted": 0.6498671561440913
+      },
+      {
+        "bin_lower": 0.7000000000000001,
+        "bin_upper": 0.8,
+        "count": 45,
+        "empirical_frequency": 0.5555555555555556,
+        "mean_predicted": 0.728124229806702
+      },
+      {
+        "bin_lower": 0.8,
+        "bin_upper": 0.9,
+        "count": 4,
+        "empirical_frequency": 0.75,
+        "mean_predicted": 0.8345893896332267
+      },
+      {
+        "bin_lower": 0.9,
+        "bin_upper": 1.0,
+        "count": 4,
+        "empirical_frequency": 0.5,
+        "mean_predicted": 0.9228058821093361
+      }
+    ],
+    "top_label_ece": 0.04320752243075277
+  }
+}

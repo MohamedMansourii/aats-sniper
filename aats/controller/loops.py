@@ -27,11 +27,13 @@ import logging
 from typing import Any
 
 from aats.contracts.events import LaunchEvent
+from aats.contracts.models import RegimeDeRiskDirective, RegimeSignal
 from aats.contracts.venue import ExecutionVenue, FillResult
 from aats.controller.control_api import KillSwitch
 from aats.controller.enrichment_wiring import SlowLoopEnrichmentWiring
 from aats.controller.fast_loop import FastLoop
 from aats.controller.reconcile import Reconciler
+from aats.controller.regime_wiring import SlowLoopRegimeWiring
 from aats.controller.slow_loop import SlowLoop
 from aats.controller.snipe_loop import SnipeLoop
 from aats.controller.state import StateStore
@@ -65,6 +67,7 @@ class ControllerOrchestrator:
         kill_switch: KillSwitch,
         *,
         enrichment: SlowLoopEnrichmentWiring | None = None,
+        regime_wiring: SlowLoopRegimeWiring | None = None,
     ) -> None:
         """
         Args:
@@ -78,6 +81,17 @@ class ControllerOrchestrator:
                         never as risk).  Production SHOULD inject this so all four
                         pre-set exit flags (narrative, insider_dump,
                         sellability_degraded, lp_unlock_approaching) are live.
+            regime_wiring: Optional SlowLoopRegimeWiring (M2-CP-04, ADR-0014).  Wires
+                        the SLOW-loop chart-path/regime model and the previously-
+                        orphaned survivor model into the control plane the SAME de-risk
+                        way: it translates a regime STATE / survival probability into
+                        the EXISTING pre-set scalar flags (narrative_failure / veto)
+                        that exit_engine/rule_engine already read — OFF the FAST/SNIPE
+                        hot path.  When None, no regime/survivor de-risk flag is ever
+                        SET (the FAST/SNIPE branches are unaffected — absence is HOLD).
+                        The regime/survivor models are is_bootstrap_not_real until the
+                        R1 corpus exists, so this stays disabled by default (no capital
+                        license); the de-risk plumbing is proven regardless.
         """
         self._store = store
         self._venue = venue
@@ -87,6 +101,7 @@ class ControllerOrchestrator:
         self._reconciler = reconciler
         self._kill = kill_switch
         self._enrichment = enrichment
+        self._regime_wiring = regime_wiring
         self._started = False
 
     def startup(self, block_time_ms: int) -> list[str]:
@@ -187,9 +202,51 @@ class ControllerOrchestrator:
         lp_unlock = self._enrichment.run_lp_unlock_watch(event_slot)
         return {"sellability": sellability, "lp_unlock": lp_unlock}
 
+    def apply_regime_signal(self, signal: RegimeSignal) -> RegimeDeRiskDirective | None:
+        """Apply ONE SLOW-loop RegimeSignal as a pre-set de-risk flag (M2-CP-04).
+
+        Called by a SLOW-loop / candidate-driven producer OFF the FAST/SNIPE hot
+        path — NEVER from tick() or the SNIPE path.  The regime STATE is translated
+        into the EXISTING narrative_failure / veto flags (de-risk only; the bullish
+        ACCUMULATION / NEUTRAL states are INERT).  A no-op (returns None) if no
+        regime wiring is injected.
+        """
+        if self._regime_wiring is None:
+            return None
+        return self._regime_wiring.apply_regime_signal(signal)
+
+    def apply_survivor_prediction(self, pred: object) -> RegimeDeRiskDirective | None:
+        """Apply ONE survivor prediction as a pre-set de-risk flag (M2-CP-04).
+
+        Called OFF the FAST/SNIPE hot path.  The survival probability is translated
+        into the EXISTING narrative_failure / veto flags (de-risk only; a healthy
+        survival read is INERT).  A no-op (returns None) if no regime wiring is
+        injected.
+        """
+        if self._regime_wiring is None:
+            return None
+        return self._regime_wiring.apply_survivor_prediction(pred)  # type: ignore[arg-type]
+
+    def run_slow_regime_tick(self, event_slot: int) -> list[RegimeDeRiskDirective]:
+        """Run the survivor de-risk read over ALL open positions at the SLOW cadence.
+
+        Call from a PERIODIC SLOW-loop driver task (e.g. every 5-30s) — NEVER from
+        tick().  The survivor inference is a SLOW-loop model call, not bounded to the
+        FAST loop's <=100ms tick budget, which is exactly why this is a SEPARATE method
+        the caller schedules off the hot path.  A no-op (returns []) if no regime
+        wiring (or no survivor model/feature source) is injected.
+        """
+        if self._regime_wiring is None:
+            return []
+        return self._regime_wiring.run_survivor_derisk(event_slot)
+
     @property
     def enrichment(self) -> SlowLoopEnrichmentWiring | None:
         return self._enrichment
+
+    @property
+    def regime_wiring(self) -> SlowLoopRegimeWiring | None:
+        return self._regime_wiring
 
     @property
     def kill_switch(self) -> KillSwitch:

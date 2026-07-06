@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from aats.contracts.events import EventTime
 
@@ -163,3 +163,173 @@ class ReasoningVerdict(BaseModel):
         if not (0.0 <= v <= 1.0):
             raise ValueError(f"confidence must be in [0, 1], got {v}")
         return v
+
+
+# ---------------------------------------------------------------------------
+# RegimeSignal — the SLOW-loop chart-path / regime model output contract
+# (ADR-0014).  Added by M2-CP-04 as a FROZEN, ADDITIVE message contract.
+#
+# WHY IT LIVES HERE, SELF-CONTAINED:
+#   The taxonomy/label half of the regime model lives in
+#   `aats.models.regime_labels` (M2-CP-02), which transitively imports the heavy
+#   ML stack (lightgbm/numpy via `aats.models.survivor`).  The frozen contract
+#   layer MUST stay lightweight (pydantic only) and free of circular imports
+#   (`aats.models.regime_labels` -> `aats.models.survivor` -> `aats.contracts.models`).
+#   So the STATE enum + de-risk directive + total mapping are RE-DECLARED here as
+#   the contract-layer law, with the SAME string values as the model layer.  A
+#   consistency test (`tests/contracts/test_regime_signal.py`) fails the build if
+#   the two ever drift, so there is one taxonomy with two lightweight/heavy homes,
+#   never two taxonomies.
+#
+# NON-WAIVABLE LAWS (asserted in tests):
+#   - A regime is a multiclass STATE + calibrated probabilities + uncertainty.
+#     There is NO price, NO size, NO win-rate / success-rate / realized-mult field.
+#   - The de-risk directive codomain is de-risk-or-inert ONLY
+#     ({NONE, REDUCE, FORCE_EXIT, VETO_ENTRY}); a risk-INCREASING directive is
+#     INEXPRESSIBLE BY TYPE (no size-up / relax-stop / delay-exit / leverage member).
+#   - ACCUMULATION and NEUTRAL are pinned INERT (-> NONE): a bullish/ranging
+#     prediction carries ZERO control authority — it can never delay an exit,
+#     relax a stop, or size up.
+#   - event_time is carried (point-in-time); wall-clock is never a decision field.
+# ---------------------------------------------------------------------------
+
+
+class RegimeState(StrEnum):
+    """The four regime STATES over the survivor/exit horizon — a multiclass STATE.
+
+    String values MUST match `aats.models.regime_labels.RegimeLabel` (consistency
+    test enforces it).  A STATE is never a rate, a success-rate, or a price.
+    """
+
+    ACCUMULATION = "ACCUMULATION"      # still sellable; healthy base-building (INERT/bullish)
+    DISTRIBUTION = "DISTRIBUTION"      # still sellable; topping / markdown (DE-RISK)
+    RUG_IN_PROGRESS = "RUG_IN_PROGRESS"  # sellability collapsing (DE-RISK-MAXIMAL)
+    NEUTRAL = "NEUTRAL"                 # still sellable; ranging / undetermined (INERT)
+
+
+class RegimeDeRiskDirective(StrEnum):
+    """The ONLY directives a regime STATE may authorize — de-risk or inert, NEVER risk-up.
+
+    PROOF (mirrors ReasoningAction / ADR-0006): the codomain contains NO size-up,
+    relax-stop, delay-exit, add-leverage, or hard-stop-override member.  A
+    risk-INCREASING directive is INEXPRESSIBLE BY TYPE.  String values MUST match
+    `aats.models.regime_labels.RegimeDeRiskAction` (consistency test enforces it).
+    """
+
+    NONE = "NONE"                # inert: authorizes NOTHING (ACCUMULATION, NEUTRAL)
+    REDUCE = "REDUCE"            # de-risk: shrink / lean-exit (DISTRIBUTION)
+    FORCE_EXIT = "FORCE_EXIT"    # de-risk-maximal: exit the position (RUG_IN_PROGRESS)
+    VETO_ENTRY = "VETO_ENTRY"    # de-risk: veto a NEW entry (never affects an open stop)
+
+
+# The TOTAL STATE -> directive mapping.  ACCUMULATION and NEUTRAL are pinned to
+# NONE (inert).  MUST match `aats.models.regime_labels.REGIME_DERISK_ACTION`.
+_REGIME_STATE_DIRECTIVE: dict[RegimeState, RegimeDeRiskDirective] = {
+    RegimeState.ACCUMULATION: RegimeDeRiskDirective.NONE,
+    RegimeState.NEUTRAL: RegimeDeRiskDirective.NONE,
+    RegimeState.DISTRIBUTION: RegimeDeRiskDirective.REDUCE,
+    RegimeState.RUG_IN_PROGRESS: RegimeDeRiskDirective.FORCE_EXIT,
+}
+
+
+# Static proof that RegimeDeRiskDirective contains no risk-increase member.
+# Runs at import time — a bad member fails the import immediately (mirrors the
+# ReasoningAction guard above).
+_REGIME_FORBIDDEN_DIRECTIVE_NAMES = frozenset(
+    {"SIZE_UP", "WIDEN_STOP", "RELAX_STOP", "DELAY_EXIT", "ADD_LEVERAGE", "OVERRIDE_HARD_STOP"}
+)
+_REGIME_ACTUAL_DIRECTIVES = frozenset(m.name for m in RegimeDeRiskDirective)
+_REGIME_ILLEGAL = _REGIME_ACTUAL_DIRECTIVES & _REGIME_FORBIDDEN_DIRECTIVE_NAMES
+if _REGIME_ILLEGAL:  # pragma: no cover — this block must never execute
+    raise RuntimeError(
+        f"RegimeDeRiskDirective contains forbidden risk-increase member(s): {_REGIME_ILLEGAL}. "
+        "ADR-0014 prohibits risk-increase directives on the regime path."
+    )
+
+
+def regime_derisk_directive(state: RegimeState) -> RegimeDeRiskDirective:
+    """The (total) de-risk directive a regime STATE authorizes.  Bullish/ranging -> NONE."""
+    return _REGIME_STATE_DIRECTIVE[state]
+
+
+class RegimeSignal(BaseModel):
+    """The SLOW-loop chart-path / regime model output — STATE + calibrated probs + uncertainty.
+
+    Source: ADR-0014 (M2-CP-04).  Produced by the SLOW loop only (the chart-path /
+    regime model is SLOW-loop only — no ONNX/Rust shim, never FAST/SNIPE).  The SNIPE
+    and FAST loops NEVER consume this contract; the SLOW loop translates its de-risk
+    directive into the EXISTING pre-set scalar flags (narrative_failure / veto) that
+    exit_engine / rule_engine already read.
+
+    `regime` is the argmax STATE; `p_*` are the per-class CALIBRATED probabilities of a
+    genuine distribution (sum to 1); `uncertainty` is a predictive band.  High
+    uncertainty / a de-risk STATE is a DE-RISK input ONLY — it can never size up, widen
+    a stop, or override a hard stop.
+
+    NO price field.  NO size field.  NO win_rate / success_rate / realized_mult field
+    (HONESTY CLAUSE, AC-037).  `is_bootstrap_not_real=True` until the R1 corpus exists —
+    no regime signal has earned any capital license.
+    """
+
+    mint: str
+    event_time: EventTime
+    model_version: str
+    taxonomy_version: str
+    # The argmax multiclass STATE (must be one of the top-probability classes).
+    regime: RegimeState
+    # Per-class CALIBRATED probabilities in [0,1]; a genuine distribution (sum == 1).
+    p_accumulation: float
+    p_neutral: float
+    p_distribution: float
+    p_rug_in_progress: float
+    # Predictive uncertainty band — high uncertainty => de-risk only, never size-up.
+    uncertainty: float
+    is_bootstrap_not_real: bool
+
+    # PROOF: NO price / size field — the regime model never emits a price or a trade size.
+    # PROOF: NO win_rate / success_rate / realized_mult field — HONESTY CLAUSE (AC-037).
+
+    model_config = {"frozen": True}
+
+    @field_validator(
+        "p_accumulation",
+        "p_neutral",
+        "p_distribution",
+        "p_rug_in_progress",
+        "uncertainty",
+    )
+    @classmethod
+    def _probability_range(cls, v: float) -> float:
+        if not (0.0 <= v <= 1.0):
+            raise ValueError(f"Regime probability/uncertainty must be in [0, 1], got {v}")
+        return v
+
+    @model_validator(mode="after")
+    def _distribution_and_argmax(self) -> RegimeSignal:
+        probs = {
+            RegimeState.ACCUMULATION: self.p_accumulation,
+            RegimeState.NEUTRAL: self.p_neutral,
+            RegimeState.DISTRIBUTION: self.p_distribution,
+            RegimeState.RUG_IN_PROGRESS: self.p_rug_in_progress,
+        }
+        total = sum(probs.values())
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(
+                f"Regime class probabilities must form a distribution summing to 1 "
+                f"(got sum={total}). Normalize before constructing a RegimeSignal."
+            )
+        top = max(probs.values())
+        # `regime` MUST be (one of) the argmax class(es) — the declared STATE is a
+        # genuine top-probability class, not an arbitrary label decoupled from the probs.
+        if probs[self.regime] < top - 1e-9:
+            raise ValueError(
+                f"regime={self.regime.value!r} is not an argmax class "
+                f"(its prob {probs[self.regime]} < max {top}). The declared STATE must "
+                "match the top-probability class."
+            )
+        return self
+
+    @property
+    def derisk_directive(self) -> RegimeDeRiskDirective:
+        """The de-risk directive this STATE authorizes (bullish/ranging -> NONE, provably inert)."""
+        return _REGIME_STATE_DIRECTIVE[self.regime]

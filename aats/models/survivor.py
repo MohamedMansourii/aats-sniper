@@ -49,11 +49,14 @@ The MCS covariates enter the survivor model with HARD monotone signs:
   - smart_wallets_in         : monotone NON-INCREASING (we are BEHIND smarter money)
   - holder_concentration     : monotone NON-INCREASING (whale concentration => rug risk)
   - sell_tax_bps             : monotone NON-INCREASING (honeypot-adjacent)
+  - creator_outflow_velocity_bps : monotone NON-INCREASING (M2-CP-07 — creator/dev-wallet
+    post-migration distribution-velocity; see aats.ingestion.creator_outflow_velocity.
+    Model-side analogue of Pepe Boost's dev-sell trigger: creator selling => P(survive) DOWN)
 A higher value on ANY of these can only push P(survive) DOWN.  account_age_median_days is
 monotone NON-DECREASING (older accounts => LESS manufactured hype => slightly safer); it is
 the ONLY +1 and it still never *triggers* an entry — it is a de-risk-relaxation, gated.
 The sign test (tests/models) FAILS the build if any of these signs is wrong — a model that
-treats manufactured hype as bullish is rejected.
+treats manufactured hype (or a dumping creator) as bullish is rejected.
 
 LEAK-FREE BY THE SAME CONSTRUCTION AS THE SNIPE CLASSIFIER (point-in-time)
 =========================================================================
@@ -168,6 +171,9 @@ SURVIVOR_COVARIATE_COLUMNS: tuple[str, ...] = (
     "mcs_account_age_median_days",  # LOW => manufactured hype => P(survive) DOWN
     "mcs_coordinated_shill_flag",   # 1 => coordinated shill => P(survive) DOWN
     "mcs_present",                  # 0 when no MCS available for this coin (sentinel above)
+    # --- M2-CP-07: creator/dev-wallet post-migration outflow velocity (de-risk-only) ---
+    "creator_outflow_velocity_bps",      # HIGHER => creator distributing faster => P(survive) DOWN
+    "creator_outflow_velocity_present",  # 0 when no coverage yet (never fabricated as "0% sold")
 )
 
 N_SURVIVOR_COVARIATES = len(SURVIVOR_COVARIATE_COLUMNS)
@@ -190,6 +196,7 @@ SURVIVOR_MONOTONE_NONINCREASING: frozenset[str] = frozenset(
         "smart_wallet_entry_lag_slots",
         "mcs_synchronicity",
         "mcs_coordinated_shill_flag",
+        "creator_outflow_velocity_bps",  # M2-CP-07: creator selling => P(survive) DOWN, never up
     }
 )
 SURVIVOR_MONOTONE_NONDECREASING: frozenset[str] = frozenset(
@@ -222,6 +229,7 @@ def _f(value: float | int | None) -> float:
 def build_survivor_covariate_row(
     frame: FeatureFrame,
     mcs: Optional[MCSScore],
+    creator_outflow_velocity_bps: float | None = None,
 ) -> list[float]:
     """Extract the survivor covariate row, in SURVIVOR_COVARIATE_COLUMNS order.
 
@@ -230,6 +238,14 @@ def build_survivor_covariate_row(
     and `mcs_present=0` carries the missingness so the tree can split on "no social data"
     instead of confusing the sentinel for a real value.  This keeps the survivor model
     robust to the common no-coverage case without ever fabricating sentiment.
+
+    `creator_outflow_velocity_bps` (M2-CP-07) is OPTIONAL and REFUSE-BY-DEFAULT: pass
+    `aats.ingestion.creator_outflow_velocity.CreatorOutflowVelocityTracker.latest_feature
+    (mint).outflow_velocity_bps` when a point-in-time reading exists, or leave it `None`
+    (the default) when no coverage is available yet -- `None` maps to the NEUTRAL sentinel
+    (0.0) plus `creator_outflow_velocity_present=0.0`, never fabricated as "0% sold".  This
+    covariate is pinned monotone NON-INCREASING (SURVIVOR_MONOTONE_NONINCREASING): higher
+    creator distribution velocity can only push P(survive) DOWN.
 
     Returns a list[float] of length N_SURVIVOR_COVARIATES.
     """
@@ -267,6 +283,13 @@ def build_survivor_covariate_row(
             1.0 if (mcs is not None and mcs.coordinated_shill_flag) else 0.0
         ),
         "mcs_present": 1.0 if mcs is not None else 0.0,
+        # M2-CP-07: creator/dev-wallet post-migration outflow velocity (de-risk-only;
+        # refuse-by-default -- absent coverage is a neutral sentinel + presence=0, NEVER
+        # fabricated as "no outflow").
+        "creator_outflow_velocity_bps": _f(creator_outflow_velocity_bps),
+        "creator_outflow_velocity_present": (
+            1.0 if creator_outflow_velocity_bps is not None else 0.0
+        ),
     }
     if set(row_by_name.keys()) != set(SURVIVOR_COVARIATE_COLUMNS):
         missing = set(SURVIVOR_COVARIATE_COLUMNS) - set(row_by_name.keys())
