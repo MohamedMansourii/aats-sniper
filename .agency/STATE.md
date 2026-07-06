@@ -5,11 +5,11 @@
 > This file is AUTHORITATIVE for live status; the companion docs under `.agency/04-plan/` are being reconciled
 > to it (they lagged a wave — see the 2026-07-03 review) so trust THIS file on any conflict.
 
-**Updated:** 2026-07-03 (post adversarial program review). **Branch:** `aats-sniper-build` · **HEAD:** verify
-with `git log -1` (top of §3 ledger). **Full suite:** `2911 passed / 0 failed`.
-**⚠️ Honest status:** the SAFETY SPINE is airtight (proven — cannot add risk / fake a win-rate), but the Wave-2
-**catastrophic exits are built + unit-tested yet NOT wired into the live loop** — fix that FIRST (Wave 2C).
-See `.agency/05-reports/review/PROGRAM-REVIEW-2026-07-03.md`.
+**Updated:** 2026-07-03 (post Wave 2C + loop-governance; Wave 3 in progress). **Branch:** `aats-sniper-build` ·
+**HEAD:** `931b58a` (verify `git log -1`). **Full suite:** `2965 passed / 0 failed`.
+**✅ Honest status:** SAFETY SPINE airtight (adversarially proven), and the Wave-2 catastrophic exits are now
+**WIRED LIVE + E2E-proven** (Wave 2C `7722294`). Milestones A + B complete. Wave 3 (chart-path architecture)
+building. Reviews + acceptance ledger: `.agency/05-reports/review/`.
 
 ---
 
@@ -34,7 +34,7 @@ integrated-live **and** GATE-A/GATE-B on the RECORDED corpus yield **GO/NO-GO**.
    producers; E19 StateStore + fast_loop added; `test_e2e_catastrophic_exits.py` with a control test proves each
    exit fires; classify_direction negation fixed). **Milestone B is now genuinely LIVE-WIRED.** ▸ NEXT CLEANUP
    (small): reconcile MISSION-BOARD/MILESTONES to this STATE, and backfill per-item dual-G3 acceptance artifacts for
-   EN1/Wave-1/E15/E16/E18/E19 under `.agency/05-reports/` (only `WAVE-2C-acceptance.md` exists so far). One OPEN
+   EN1/Wave-1/E15/E16/E18/E19 — ✅ DONE, see `.agency/05-reports/review/ACCEPTANCE-LEDGER.md`. One OPEN
    decision: whether the Wave-2B ENTRY gates (deployer-rep/funding-age/lp-unlock-entry) wire into `snipe_loop` now
    or stay paper-neutral — currently paper-neutral (document if you change it).
 2. **Resume Wave 3** (chart-path architecture): `git stash list` → pop `wave3-wip-paused-for-review` +
@@ -85,6 +85,7 @@ integrated-live **and** GATE-A/GATE-B on the RECORDED corpus yield **GO/NO-GO**.
 - **Loop governance (AATS is now a registered L2 loop — SIM+BUILD ONLY):** `C:\dev\aats\LOOP.md` (constitution:
   denylist + human gates + dispatch discipline) · `loop-budget.md` (caps + kill-switch) · `loop-run-log.md`
   (append one JSON line per wave) · registered in `~/.claude/loops/CONTROL-PLANE.md`.
+- **Acceptance ledger** (per-wave dual-G3 evidence, EN1→Wave 2C): `.agency/05-reports/review/ACCEPTANCE-LEDGER.md`
 - Program review (honest verdict + findings): `.agency/05-reports/review/PROGRAM-REVIEW-2026-07-03.md`
 - Methodology review (loop/swarm compliance): `.agency/05-reports/review/METHODOLOGY-REVIEW-2026-07-03.md`
 - Missions/points: `MISSION-BOARD.md` (⚠️ being reconciled) · Architecture: `ELITE-ARCHITECTURE.md` ·
