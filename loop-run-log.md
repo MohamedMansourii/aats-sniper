@@ -31,4 +31,4 @@
 
 ## Alerts This Period
 - 2026-07-06: Fable session limit hit mid-audit (resets ~12:40 Africa/Tunis) — agent dispatch paused until reset; main-loop (commits/docs/verify) + detached local processes still available.
-- 2026-07-06: persistent corpus recorder started (PID 21476) — Phase-5 snapshots now accruing autonomously; keep PC on.
+- 2026-07-06: persistent corpus recorder started (PID 21476) — CONNECTED but recording 0. All received PumpPortal events map to USDC and are dropped by the quote-mint guard (guard logs "(mapping bug)"). Earlier bounded runs recorded genuine launches, so PumpPortal stream/schema OR the new-token mint-mapping regressed. CORPUS ACCRUAL IS BLOCKED until the mint-mapping is fixed — OR sidestep both the bug + the accrual-time by buying Bitquery archival (resolved launches+outcomes directly). "Accruing autonomously" (prior line) was WRONG — corrected here.
