@@ -21,5 +21,7 @@
 {"date":"2026-07-06","pattern":"loop-op","run":"corpus-recorder-start","outcome":"KILLED (bg non-persistent)","tokens_estimate":0,"commit":null,"note":"recorder connected + correctly dropped USDC noise, but Claude bg tasks die across turns -> corpus accrual needs a PERSISTENT process (docker stack always-on OR operator terminal) OR paid Bitquery archival. Phase-5 data is now the top external blocker."}
 {"date":"2026-07-06","pattern":"codex-handoff","run":"codex-work-packages-1-and-2","outcome":"READY","tokens_estimate":25000,"commit":"pending","note":"CP-07 fix + Wave 4 (E-M1-02/05/06/07) packaged for Codex (maker=Codex, checker=Claude). E-M1-01/03 stay on Claude."}
 
+{"date":"2026-07-06","pattern":"security-audit","run":"exec-custody-audit","outcome":"PASS-WITH-CONDITIONS","tokens_estimate":180000,"commit":"pending","note":"DRY-RUN paper state SECURE today (no exploitable crit/high; no wallet key in system; every real-money path fail-closed + test-proven send_calls==0; money int/Decimal; secret sweep clean; 176 exec tests pass). GO-LIVE BLOCKED until: F1 real aats-signer built (currently scaffold — the un-bypassable spend-cap/allowlist enforcer), F2 DEVNET-bypasses-DRY_RUN caveat, F3 dep hash-lock + pip-audit. Report EXEC-CUSTODY-AUDIT-2026-07-06.md. Agent hit Fable session limit (resets 12:40) but wrote the report first."}
+
 ## Alerts This Period
-(none)
+- 2026-07-06: Fable session limit hit mid-audit (resets ~12:40 Africa/Tunis) — agent dispatch paused until reset; main-loop (commits/docs/verify) still available.
