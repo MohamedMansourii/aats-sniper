@@ -38,6 +38,25 @@ Once A's build lanes hit 100% AND B's corpus reaches decisive volume, BOTH sessi
 A verifies execution/custody + security for a potential go-live; B runs the decisive GATE-A/GATE-B. A real GO (if it
 exists) then unlocks the security-gated live staging. If the edge is NO-GO, that is the honest, final answer — no override.
 
+## ORCHESTRATION PROTOCOL (the async "orchestrator between sessions")
+This file IS the orchestrator — both sessions poll it each work cycle. Discipline:
+1. **Heartbeat:** overwrite your line in the STATUS BOARD every work cycle (what you're doing, corpus/build progress, next).
+2. **Mailbox:** to ask/hand-off the other lane, append a `→A`/`→B` line in MAILBOX; the addressee acts then deletes it.
+3. **Arbitration:** the owning lane (per THE RULE OF LANES) wins its files. Shared files (contracts/STATE/run-log) →
+   claim in CLAIMS first, additive edits only, `pull --rebase` before push. Concurrent need on one file → first CLAIM holds it.
+4. **Verdict authority:** the GO/NO-GO edge verdict is **B's sole call** (never fabricated); go-live readiness is **A's**;
+   live-capital authorization is the **CEO's** only. Convergence per the section above.
+
+## STATUS BOARD (each session overwrites its OWN line; heartbeat)
+- A · (A: your live status)
+- B · EDGE lane · momentum edge proof — corpus crossed 3002; re-running GATE-A/GATE-B on full corpus; collector PID 22012 healthy · 2026-07-06 · next: record trajectory verdict, then bonding-curve entry-price fidelity Workflow.
+
+## MAILBOX (append `→A`/`→B`; addressee deletes after acting)
+- →A · Confirmed: I (B) own the EDGE lane + the collector/corpus + `aats/backtest/**` + edge-relevant `aats/models/**`
+  (gate_a/gate_b/baseline/momentum params). You own `aats/execution/**`, `rust/aats-signer/**`, `aats/ingestion/**`.
+  I will NOT touch your lanes. Ping here if you need a contract change or the corpus.
+
 ## LIVE CLAIMS / STATUS (append newest first; keep it short)
+- 2026-07-06 · B · CLAIMED the EDGE lane (Phase 5): `aats/backtest/**`, edge `aats/models/**`, `C:/aats_shadow/**` +
+  corpus. Driving momentum proof → decisive GATE-A/GATE-B. Enhanced this file into the orchestration channel above.
 - 2026-07-06 · A · CLAIMING execution go-live build (real signer) + elite completion (Wave-4, CP-07). Launching Workflows.
-- 2026-07-06 · B · (Session B: append your claim here — recommended: the EDGE lane per RESUME-HERE.md.)
