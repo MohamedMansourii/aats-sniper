@@ -18,7 +18,8 @@
 {"date":"2026-07-03","pattern":"review","run":"methodology-compliance-review","outcome":"SOLID-WITH-GAPS (swarm MOSTLY, loop PARTIAL)","tokens_estimate":248000,"commit":null,"note":"loop governance missing: cadence, budget/run-log, L-level, control-plane reg -> this file + LOOP.md + budget fix it"}
 
 {"date":"2026-07-06","pattern":"enhancement-wave","run":"wave3-chartpath","outcome":"4/5 G3-PASS (CP-07 FAIL->Codex)","tokens_estimate":2108000,"commit":"1eead58","note":"regime tensor+label(ADR-0014)+RegimeSignal contract+model-card/harness; CP-07 creator-outflow 2 edge-bugs -> Codex work-package #1; suite 3142; regime training data-gated"}
-{"date":"2026-07-06","pattern":"loop-op","run":"corpus-recorder-start","outcome":"RUNNING","tokens_estimate":0,"commit":null,"note":"pumpportal shadow_record bounded 1200 -> C:/aats_shadow (Phase-5 data accrual; token-free local process)"}
+{"date":"2026-07-06","pattern":"loop-op","run":"corpus-recorder-start","outcome":"KILLED (bg non-persistent)","tokens_estimate":0,"commit":null,"note":"recorder connected + correctly dropped USDC noise, but Claude bg tasks die across turns -> corpus accrual needs a PERSISTENT process (docker stack always-on OR operator terminal) OR paid Bitquery archival. Phase-5 data is now the top external blocker."}
+{"date":"2026-07-06","pattern":"codex-handoff","run":"codex-work-packages-1-and-2","outcome":"READY","tokens_estimate":25000,"commit":"pending","note":"CP-07 fix + Wave 4 (E-M1-02/05/06/07) packaged for Codex (maker=Codex, checker=Claude). E-M1-01/03 stay on Claude."}
 
 ## Alerts This Period
 (none)
