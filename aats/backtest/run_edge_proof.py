@@ -21,6 +21,15 @@ injectable so tests drive it with fixtures and no network.
 
 EXIT CODES: 0 = GO (GATE-A model PASS and GATE-B PASS); 3 = NO-GO (verdict computed, not both
 pass); 2 = FAIL-CLOSED (no resolved outcomes / no data).
+
+STRATEGIES
+==========
+  * `launch`   (default): decide at the launch instant from t0 economics alone
+                (`outcome_harness.build_from_corpus`). The proven, already-run strategy.
+  * `momentum` (--strategy momentum [--entry-horizon 60]): WAIT until T_ENTRY seconds, read the
+                early price/pressure TRAJECTORY (<= T_ENTRY marks) and decide, then hold to a
+                later exit (`momentum_harness.build_momentum_from_corpus`). Same leak-safe PIT
+                machinery, same GATE-A / GATE-B controls, moving decision boundary at T_ENTRY.
 """
 
 from __future__ import annotations
@@ -31,6 +40,10 @@ import os
 import sys
 from pathlib import Path
 
+from aats.backtest.momentum_harness import (
+    DEFAULT_ENTRY_HORIZON_S,
+    build_momentum_from_corpus,
+)
 from aats.backtest.outcome_harness import (
     BlockTimeResolver,
     BlockTimeUnavailable,
@@ -41,6 +54,10 @@ from aats.models.gate_a import compute_gate_a
 from aats.models.gate_b import TradeOutcome, UnitOfRisk, compute_gate_b_delta
 
 _DEFAULT_CORPUS = "C:/aats_shadow/labeled_corpus.jsonl"
+
+# Selection strategies the runner can score.
+STRATEGY_LAUNCH = "launch"
+STRATEGY_MOMENTUM = "momentum"
 
 # Exit codes (documented in the module docstring).
 EXIT_GO = 0
@@ -73,22 +90,46 @@ def run_edge_proof(
     *,
     block_time_resolver: BlockTimeResolver,
     out_path: str | Path | None = None,
+    strategy: str = STRATEGY_LAUNCH,
+    entry_horizon_s: int = DEFAULT_ENTRY_HORIZON_S,
 ) -> tuple[int, dict]:
     """Build the TradeOutcome set and compute the GATE-A / GATE-B verdict.
 
     Returns (exit_code, scoreboard_dict).  Fail-closed (EXIT_FAIL_CLOSED) when no outcome
     resolves — no metric on no data, never a fabricated pass.
+
+    `strategy` selects the decision boundary:
+      * `launch`   — decide at t0 (`build_from_corpus`);
+      * `momentum` — decide at `entry_horizon_s` seconds from the early trajectory
+                     (`build_momentum_from_corpus`). Both emit the SAME TradeOutcome schema,
+                     so GATE-A / GATE-B are computed identically.
     """
-    outcomes, stats = build_from_corpus(
-        corpus_path, block_time_resolver=block_time_resolver
-    )
+    if strategy == STRATEGY_MOMENTUM:
+        outcomes, stats = build_momentum_from_corpus(
+            corpus_path,
+            block_time_resolver=block_time_resolver,
+            entry_horizon_s=entry_horizon_s,
+        )
+    elif strategy == STRATEGY_LAUNCH:
+        outcomes, stats = build_from_corpus(
+            corpus_path, block_time_resolver=block_time_resolver
+        )
+    else:
+        raise ValueError(
+            f"unknown strategy {strategy!r} (expected {STRATEGY_LAUNCH!r} or {STRATEGY_MOMENTUM!r})"
+        )
 
     scoreboard: dict = {
         "corpus_path": str(corpus_path),
+        "strategy": strategy,
         "n_records": stats.n_records,
         "n_resolved": stats.n_resolved,
         "n_censored": stats.n_censored,
     }
+    if strategy == STRATEGY_MOMENTUM:
+        scoreboard["entry_horizon_s"] = getattr(stats, "entry_horizon_s", entry_horizon_s)
+        scoreboard["n_tradeable"] = getattr(stats, "n_tradeable", None)
+        scoreboard["n_skipped_untradeable"] = getattr(stats, "n_skipped_untradeable", None)
 
     if not outcomes:
         scoreboard["verdict"] = "FAIL-CLOSED (no resolved TradeOutcome records)"
@@ -136,6 +177,15 @@ def run_edge_proof(
 def _print_scoreboard(scoreboard: dict) -> None:
     print("\n=== AATS EDGE PROOF (GATE-A / GATE-B) ===")
     print(f"  corpus            : {scoreboard.get('corpus_path')}")
+    strategy = scoreboard.get("strategy", STRATEGY_LAUNCH)
+    if strategy == STRATEGY_MOMENTUM:
+        print(
+            f"  strategy          : momentum (T_ENTRY={scoreboard.get('entry_horizon_s')}s, "
+            f"tradeable={scoreboard.get('n_tradeable')}, "
+            f"skipped_untradeable={scoreboard.get('n_skipped_untradeable')})"
+        )
+    else:
+        print(f"  strategy          : {strategy}")
     print(
         f"  records           : {scoreboard.get('n_records')} "
         f"(resolved={scoreboard.get('n_resolved')}, censored={scoreboard.get('n_censored')})"
@@ -183,11 +233,32 @@ def main(argv: list[str] | None = None) -> int:
         help="RPC URL for getTransaction block_time resolution (default: env RPC_PRIMARY). "
         "Never logged.",
     )
+    parser.add_argument(
+        "--strategy",
+        default=STRATEGY_LAUNCH,
+        choices=(STRATEGY_LAUNCH, STRATEGY_MOMENTUM),
+        help=(
+            f"Selection strategy: {STRATEGY_LAUNCH!r} (decide at t0, default) or "
+            f"{STRATEGY_MOMENTUM!r} (decide at --entry-horizon seconds from the early "
+            "price/pressure trajectory, then hold)."
+        ),
+    )
+    parser.add_argument(
+        "--entry-horizon",
+        type=int,
+        default=DEFAULT_ENTRY_HORIZON_S,
+        help=f"Momentum entry horizon T_ENTRY in seconds (default: {DEFAULT_ENTRY_HORIZON_S}). "
+        "Only used when --strategy momentum.",
+    )
     args = parser.parse_args(argv)
 
     resolver = _default_resolver(args.rpc_url)
     exit_code, scoreboard = run_edge_proof(
-        args.corpus, block_time_resolver=resolver, out_path=args.out
+        args.corpus,
+        block_time_resolver=resolver,
+        out_path=args.out,
+        strategy=args.strategy,
+        entry_horizon_s=args.entry_horizon,
     )
     _print_scoreboard(scoreboard)
     return exit_code
