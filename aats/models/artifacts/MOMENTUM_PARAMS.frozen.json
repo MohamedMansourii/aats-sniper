@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "FROZEN momentum / reaction-entry selection constants. DO NOT EDIT (retune) after the first",
+    "edge-proof run. This is the audit-parity twin of baseline.frozen.json: it externalizes the",
+    "momentum harness's inline model constants so they are a declared, change-controlled artifact",
+    "rather than magic numbers buried in code (anti-p-hacking, red-team flaw 2A).",
+    "",
+    "These VALUES ARE IDENTICAL to the constants previously inlined in aats/backtest/momentum_harness.py",
+    "(this file is an EXTERNALIZATION, not a retune). The canonical hash in `frozen_hash` is recomputed",
+    "deterministically from `params` alone; a test (tests/backtest) FAILS if any hashed value drifts.",
+    "",
+    "THE MODEL RULE (momentum_harness.py, decide_momentum_entry): select iff, using ONLY the <=T_ENTRY",
+    "trajectory, (1) tradeable at T_ENTRY (non-null positive price), (2) early buy pressure",
+    "buys/(buys+sells) >= `buy_fraction_floor`, (3) price ROSE from the earliest pre-entry mark to the",
+    "T_ENTRY mark, (4) liquidity_usd > `min_liquidity_usd`. THE BASELINE (naive momentum, the GATE-B",
+    "control) is the strict SUBSET-parent: tradeable AND price rose ONLY (no buy-pressure / liquidity",
+    "filter). The baseline carries NO free numeric knob of its own; `buy_fraction_floor` and",
+    "`min_liquidity_usd` are the ONLY tunables and they gate the MODEL, never the baseline.",
+    "",
+    "MONEY / THRESHOLD DISCIPLINE (data-models.md §0): every numeric is a Decimal-as-STRING, never a",
+    "float. `min_liquidity_usd` = \"0\" means a strictly-positive existence check (a real, sellable",
+    "market must exist) — it is a structural floor, not a fitted level.",
+    "",
+    "FROZEN — MUST NOT BE TUNED AGAINST THE CORPUS. Changing a value here is p-hacking the selection",
+    "against the scoreboard; it is a TEST FAILURE, not an edit. Open an ADR + delta notice instead."
+  ],
+  "schema_version": "1.0.0",
+  "params": {
+    "buy_fraction_floor": "0.55",
+    "min_liquidity_usd": "0"
+  },
+  "params_provenance": {
+    "buy_fraction_floor": "Frozen early buy-pressure floor: select only when buys/(buys+sells) at T_ENTRY >= this fraction. 0.55 = strictly more buyers than sellers by a clear margin (a curve where sells already match buys is NOT momentum). Illustrative placeholder, NOT a fitted parameter. Decimal-as-string, never float.",
+    "min_liquidity_usd": "Frozen liquidity floor (USD): the model selects only when liquidity_usd is strictly greater than this value at T_ENTRY (a real, sellable market exists). 0 = strictly-positive existence check. Decimal-as-string, never float."
+  },
+  "baseline_rule": "naive momentum — enter every launch that is tradeable at T_ENTRY AND whose price ROSE to T_ENTRY ('buy what is going up'). No free numeric parameter; it is the strict superset of the model's selection.",
+  "frozen_at_first_fit": true,
+  "first_fit_recorded_at_ms": 1781913600000,
+  "frozen_hash": "03bc2261f881cb6ac2a7424c45fa6332afca1523e0212ff66d60cb1a0902a052"
+}

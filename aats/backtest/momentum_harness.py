@@ -45,9 +45,27 @@ Select iff, using ONLY the `<= T_ENTRY` trajectory:
   1. the launch is TRADEABLE at T_ENTRY (a non-null price exists at the T_ENTRY mark), AND
   2. early BUY PRESSURE is high — `buys / (buys + sells)` at T_ENTRY >= a frozen floor, AND
   3. price ROSE from the earliest pre-entry mark to the T_ENTRY mark (momentum confirmed), AND
-  4. LIQUIDITY is present at T_ENTRY (a real, sellable market exists).
-These constants are ILLUSTRATIVE and FROZEN (declared once, never re-tuned against the score) —
-the same p-hacking discipline the frozen baseline enforces.
+  4. LIQUIDITY is present at T_ENTRY (`liquidity_usd` > a frozen floor — a real, sellable market).
+These constants are ILLUSTRATIVE and FROZEN — they are NOT inline magic numbers but a declared,
+change-controlled artifact (`aats/models/artifacts/MOMENTUM_PARAMS.frozen.json`, loaded at import,
+audit-parity twin of `baseline.frozen.json`).  They are declared ONCE and MUST NOT be re-tuned
+against the scoreboard (the same anti-p-hacking discipline the frozen baseline enforces); a test
+FAILS if any frozen value drifts.  See `aats/models/artifacts/MODEL_CARD_momentum.md`.
+
+KNOWN MODELING LIMITATION — ~64s TIMING DRIFT AT T_ENTRY (mild latency-optimism)
+================================================================================
+The corpus collector's forward marks are stamped at NOMINAL horizons (30/60/120/... s), but the
+collector actually SAMPLES with observation-time drift: the nominal-60s mark lands at ~64s MEDIAN
+(p90 ≈ +15.6s).  So "the reaction read AT T_ENTRY" is really the state at `T_ENTRY + observation
+drift` — a few seconds MORE trajectory than a strict-live bot would have at exactly T_ENTRY.  This
+is a MILD LATENCY-OPTIMISM: a real bot deciding at exactly 60s would see slightly LESS state than
+this harness does, so the harness's selection is, if anything, marginally advantaged vs a strict-
+live entry.  We DO NOT correct the collector here (that is the ingestion lane's fix — improve
+entry-price fidelity, e.g. bonding-curve price at exactly T_ENTRY); we document the drift honestly
+so the sizer/reviewer reads the T_ENTRY features as `T_ENTRY + drift`, not as a strict-60s snapshot.
+The leak boundary is UNAFFECTED: drift moves the pre-entry mark slightly LATER in real time but the
+mark's stamped event-time (`launch_block_time + horizon_s*1000`) is still <= the decision cutoff, so
+`assert_features_leq_decision` still holds — the drift optimism is about STALENESS, not lookahead.
 
 THE BASELINE (naive momentum — the control the model must beat)
 ==============================================================
@@ -75,10 +93,12 @@ network, no keypair, no signing, no OMS, no capital.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import random
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from aats.backtest.outcome_harness import (
@@ -104,11 +124,134 @@ from aats.risk.exit_sim import walk_position
 # The default reaction-entry horizon: decide 60 s after launch, reading the 30s & 60s marks.
 DEFAULT_ENTRY_HORIZON_S = 60
 
-# --- FROZEN model constants (illustrative; declared once, NOT tuned against the scoreboard) --
+# The FIXED corpus horizon grid the collector samples on (seconds).  `_entry_mark` requires an
+# EXACT grid match at T_ENTRY, so an off-grid `entry_horizon_s` (e.g. 45, 90) would silently find
+# NO T_ENTRY mark and decline EVERY record — a misleading all-NO-GO.  `_validate_entry_horizon`
+# fails LOUD on an off-grid value instead (see build_momentum_outcomes / decide_momentum_entry).
+CORPUS_HORIZON_GRID: tuple[int, ...] = (30, 60, 120, 300, 600, 900, 1800)
+
+
+# ---------------------------------------------------------------------------
+# FROZEN model constants — declared, change-controlled ARTIFACT (anti-p-hacking)
+# ---------------------------------------------------------------------------
+# The momentum selection constants are NOT inline magic numbers: they live in a frozen JSON
+# artifact (`aats/models/artifacts/MOMENTUM_PARAMS.frozen.json`), the audit-parity twin of
+# `aats/models/baseline.frozen.json`, and are loaded at IMPORT below.  Values are declared ONCE
+# and MUST NOT be re-tuned against the scoreboard; a test FAILS if any frozen value drifts.
+
+_MOMENTUM_PARAMS_PATH = (
+    Path(__file__).resolve().parents[1] / "models" / "artifacts" / "MOMENTUM_PARAMS.frozen.json"
+)
+
+# The exact, ORDERED set of param keys hashed into the freeze (fixed order = stable hash).
+_MOMENTUM_HASHED_PARAM_KEYS: tuple[str, ...] = ("buy_fraction_floor", "min_liquidity_usd")
+
+
+class MomentumParamsError(ValueError):
+    """Raised when the frozen momentum params artifact is missing, malformed, or has DRIFTED.
+
+    A drifted `frozen_hash` is the anti-p-hacking failure (mirrors baseline `BaselineFrozenError`):
+    the momentum selection constants changed after they were frozen.  The fix is NOT to edit the
+    freeze — it is to recognise that retuning a frozen selection constant against the corpus is
+    p-hacking the control, and is forbidden.
+    """
+
+
+@dataclass(frozen=True)
+class MomentumParams:
+    """The frozen, money-correct momentum selection constants (Decimal, never float)."""
+
+    buy_fraction_floor: Decimal
+    min_liquidity_usd: Decimal
+    params_hash: str
+
+
+def _canonical_momentum_hash(params: dict) -> str:
+    """Deterministic SHA-256 over the hashed param subset (Decimal-as-string, no float).
+
+    Reproducible on any machine / PYTHONHASHSEED: values are normalised via `str(Decimal(...))`
+    so the digest is invariant to JSON formatting and never coerces money to float.
+    """
+    missing = [k for k in _MOMENTUM_HASHED_PARAM_KEYS if k not in params]
+    if missing:
+        raise MomentumParamsError(
+            f"frozen momentum config `params` is missing hashed key(s): {missing}. "
+            f"Required hashed keys: {list(_MOMENTUM_HASHED_PARAM_KEYS)}."
+        )
+    canonical: dict[str, str] = {}
+    for key in _MOMENTUM_HASHED_PARAM_KEYS:
+        val = params[key]
+        if isinstance(val, float):
+            raise MomentumParamsError(
+                f"momentum param {key!r} must be a Decimal string, not float (got {val!r}). "
+                "Thresholds are Decimal (data-models §0), never float."
+            )
+        try:
+            canonical[key] = str(Decimal(str(val)))
+        except InvalidOperation as exc:
+            raise MomentumParamsError(
+                f"momentum param {key!r} is not a valid Decimal (got {val!r})."
+            ) from exc
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def load_momentum_params(path: str | Path = _MOMENTUM_PARAMS_PATH) -> MomentumParams:
+    """Load + type the frozen momentum params, verifying the canonical hash has not drifted.
+
+    Raises `MomentumParamsError` if the artifact is missing, a value is float-money, or the live
+    canonical hash != the stored `frozen_hash` (the anti-p-hacking freeze check).
+    """
+    p = Path(path)
+    if not p.exists():
+        raise MomentumParamsError(f"frozen momentum params artifact not found at {p}")
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    params = raw.get("params")
+    if not isinstance(params, dict):
+        raise MomentumParamsError("frozen momentum config must contain a `params` object")
+    live_hash = _canonical_momentum_hash(params)
+    stored_hash = raw.get("frozen_hash")
+    if stored_hash not in (None, "", "null") and stored_hash != live_hash:
+        raise MomentumParamsError(
+            "momentum_params_changed_after_fit: the frozen momentum selection constants changed "
+            f"after first freeze.\n  frozen_hash = {stored_hash}\n  live_hash   = {live_hash}\n"
+            f"  hashed keys = {list(_MOMENTUM_HASHED_PARAM_KEYS)}\n"
+            "A frozen selection constant is anti-p-hacking control (audit parity with the frozen "
+            "baseline). Retuning it against the corpus is forbidden — revert the value or open an "
+            "ADR + delta notice. This is a TEST FAILURE, not an edit."
+        )
+    return MomentumParams(
+        buy_fraction_floor=Decimal(str(params["buy_fraction_floor"])),
+        min_liquidity_usd=Decimal(str(params["min_liquidity_usd"])),
+        params_hash=live_hash,
+    )
+
+
+# Loaded ONCE at import (mirrors baseline.py's use of baseline.frozen.json).
+MOMENTUM_PARAMS = load_momentum_params()
+
 # Buy pressure floor: strictly MORE buyers than sellers by a clear margin at T_ENTRY.  A curve
-# where sells already match buys is NOT momentum.  This is a documented placeholder threshold,
-# not a fitted parameter (same anti-p-hacking discipline as the frozen baseline).
-_MOMENTUM_BUY_FRACTION_FLOOR = Decimal("0.55")
+# where sells already match buys is NOT momentum.  Frozen artifact value (== previous inline 0.55).
+_MOMENTUM_BUY_FRACTION_FLOOR = MOMENTUM_PARAMS.buy_fraction_floor
+# Liquidity floor: a real, sellable market must exist at T_ENTRY.  Frozen value 0 == the previous
+# inline strictly-positive existence check (`liquidity_usd > 0`).
+_MOMENTUM_MIN_LIQUIDITY_USD = MOMENTUM_PARAMS.min_liquidity_usd
+
+
+def _validate_entry_horizon(entry_horizon_s: int) -> None:
+    """Fail LOUD if `entry_horizon_s` is off the fixed corpus horizon grid.
+
+    `_entry_mark` requires an EXACT grid match at T_ENTRY, so an off-grid horizon (e.g. 45, 90)
+    would silently find no T_ENTRY mark and decline EVERY record — a misleading all-NO-GO run.
+    Raise `ValueError` here so the misconfiguration is caught immediately, not hidden.
+    """
+    if entry_horizon_s not in CORPUS_HORIZON_GRID:
+        raise ValueError(
+            f"entry_horizon_s={entry_horizon_s} is OFF the corpus horizon grid "
+            f"{CORPUS_HORIZON_GRID}. `_entry_mark` requires an EXACT grid match, so an off-grid "
+            "horizon would silently find NO T_ENTRY mark and decline EVERY record (a misleading "
+            "all-NO-GO). Choose a horizon on the grid (fail-loud, not silent)."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -174,8 +317,12 @@ def read_momentum_forward(record: CorpusRecord) -> list[MomentumForwardObservati
             sells = int(txns.get("sells", 0) or 0)
         except (TypeError, ValueError):
             buys, sells = 0, 0
-        out.append(
-            MomentumForwardObservation(
+        # A non-numeric horizon_s / price / liquidity / vol / obs_wall_ms is MALFORMED data.
+        # Wrap the parse failure as CorpusRecordError so build_momentum_outcomes CENSORS this one
+        # record (consistent with existing censoring) instead of a bare ValueError/InvalidOperation
+        # aborting the whole run.
+        try:
+            parsed = MomentumForwardObservation(
                 horizon_s=int(obs["horizon_s"]),
                 price_sol=_decimal_or_none(obs.get("price_sol")),
                 liquidity_usd=_decimal_or_none(obs.get("liquidity_usd")),
@@ -185,7 +332,13 @@ def read_momentum_forward(record: CorpusRecord) -> list[MomentumForwardObservati
                 note=str(obs.get("note", "")),
                 obs_wall_ms=int(obs.get("obs_wall_ms", 0)),
             )
-        )
+        except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+            raise CorpusRecordError(
+                f"{record.mint or '?'}: malformed forward observation "
+                f"(horizon_s={obs.get('horizon_s')!r}, price_sol={obs.get('price_sol')!r}) "
+                "(CENSORED)"
+            ) from exc
+        out.append(parsed)
     out.sort(key=lambda o: o.horizon_s)
     return out
 
@@ -327,7 +480,11 @@ def decide_momentum_entry(
 
     `pre_entry_marks` must be the `<= T_ENTRY` partition; passing a `> T_ENTRY` mark makes its
     feature's event-time exceed the cutoff and trips the guard in step 2.
+
+    Raises `ValueError` (fail-loud) if `entry_horizon_s` is off the corpus horizon grid — an
+    off-grid horizon would silently find no T_ENTRY mark and decline every record.
     """
+    _validate_entry_horizon(entry_horizon_s)
     cutoff = momentum_decision_cutoff_ms(entry, entry_horizon_s)
     features = assemble_momentum_features(entry, pre_entry_marks, extra_features=extra_features)
     summary = assert_features_leq_decision(features, cutoff)
@@ -352,7 +509,13 @@ def decide_momentum_entry(
     prior_price = _earliest_prior_price(pre_entry_marks, entry_horizon_s)
     price_rose = prior_price is not None and entry_price > prior_price
     buy_fraction = mark.buy_fraction
-    liquidity_present = mark.liquidity_present
+    liquidity_present = mark.liquidity_present  # raw existence (audit field)
+    # MODEL liquidity gate: liquidity_usd strictly above the FROZEN floor (artifact-loaded).
+    # With the frozen floor = 0 this is the strictly-positive existence check, identical to
+    # `liquidity_present`; the None-guard mirrors the property so no TypeError on a dead market.
+    liquidity_ok = (
+        mark.liquidity_usd is not None and mark.liquidity_usd > _MOMENTUM_MIN_LIQUIDITY_USD
+    )
 
     # BASELINE — naive momentum: buy any tradeable launch that is going up.
     baseline_selected = bool(price_rose)
@@ -360,7 +523,7 @@ def decide_momentum_entry(
     model_selected = bool(
         price_rose
         and (buy_fraction >= _MOMENTUM_BUY_FRACTION_FLOOR)
-        and liquidity_present
+        and liquidity_ok
     )
 
     return MomentumDecision(
@@ -482,7 +645,11 @@ def build_momentum_outcomes(
 
     The DECISION and OUTCOME are computed by two functions that never share an argument — the
     (moving, T_ENTRY) structural leak boundary.
+
+    Raises `ValueError` (fail-loud) BEFORE the loop if `entry_horizon_s` is off the corpus horizon
+    grid: an off-grid horizon would silently decline every record (a misleading all-NO-GO).
     """
+    _validate_entry_horizon(entry_horizon_s)
     rconfig = risk_config or RiskConfig()
     cstack = cost_stack or build_round_trip_cost_stack()
     engine = ExitEngine(config=preset("secure_balanced"))

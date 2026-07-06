@@ -28,11 +28,13 @@ import pytest
 
 from aats.backtest import momentum_harness as mh
 from aats.backtest.momentum_harness import (
+    CORPUS_HORIZON_GRID,
     DEFAULT_ENTRY_HORIZON_S,
     MomentumForwardObservation,
     assemble_momentum_features,
     build_momentum_outcomes,
     decide_momentum_entry,
+    load_momentum_params,
     momentum_decision_cutoff_ms,
     read_momentum_forward,
     resolve_momentum_outcome,
@@ -41,6 +43,7 @@ from aats.backtest.momentum_harness import (
 from aats.backtest.outcome_harness import (
     BlockTime,
     CorpusRecord,
+    CorpusRecordError,
     FixtureBlockTimeResolver,
     LeakError,
     PITFeature,

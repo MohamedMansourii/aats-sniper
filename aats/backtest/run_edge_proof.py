@@ -42,11 +42,13 @@ from pathlib import Path
 
 from aats.backtest.momentum_harness import (
     DEFAULT_ENTRY_HORIZON_S,
+    MomentumHarnessStats,
     build_momentum_from_corpus,
 )
 from aats.backtest.outcome_harness import (
     BlockTimeResolver,
     BlockTimeUnavailable,
+    HarnessStats,
     RpcBlockTimeResolver,
     build_from_corpus,
 )
@@ -104,6 +106,10 @@ def run_edge_proof(
                      (`build_momentum_from_corpus`). Both emit the SAME TradeOutcome schema,
                      so GATE-A / GATE-B are computed identically.
     """
+    # `stats` is one of two concrete stat types depending on the branch — annotate the union so
+    # mypy accepts both assignments (runtime already safe; the scoreboard reads only common /
+    # getattr-guarded fields).
+    stats: HarnessStats | MomentumHarnessStats
     if strategy == STRATEGY_MOMENTUM:
         outcomes, stats = build_momentum_from_corpus(
             corpus_path,
