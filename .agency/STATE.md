@@ -10,8 +10,10 @@
 **✅ Honest status:** SAFETY SPINE airtight; Wave-2 exits WIRED LIVE + E2E-proven; Wave 3 (Phase 2 regime
 architecture) DONE 4/5 — CP-07 → Codex WP#1. Exec/custody **security audit DONE = PASS-WITH-CONDITIONS**
 (`.agency/05-reports/security/EXEC-CUSTODY-AUDIT-2026-07-06.md`; go-live blocker = build the real signer).
-**⭐ EDGE PROOF EXECUTED 2026-07-06 → NO-GO / UNPROVEN-NO-REAL-DATA** (GATE-A fail-closed on 0 outcomes; never
-fabricates — `.agency/05-reports/qa/EDGE-PROOF-2026-07-06.md`). **The in-repo PumpPortal recorder is bugged**
+**⭐ EDGE PROOF RAN ON REAL DATA 2026-07-06 → NO-GO** (400 labeled launches, resolved 400/400; harness dual-G3 PASS
+`9161960`). GATE-B: thin-feature model (+0.311) < naive baseline (+0.619) — NO selection edge; GATE-A lower-95%
+bounds negative (not stat-positive). **CAVEAT: PRELIMINARY** — thin create-only features (no first-60s
+microstructure), coarse DexScreener-spot outcome fidelity. Real numbers + path: `.agency/05-reports/qa/EDGE-PROOF-2026-07-06-REAL.md`. **The in-repo PumpPortal recorder is bugged**
 (banks ~0; feed+RPC proven healthy) → bypassed by a WORKING standalone **labeled-corpus collector**
 (`C:/aats_shadow/_collector.py`, detached PID varies, entry+forward-outcome at 1m/5m/15m). Corpus now accruing
 autonomously. Reviews + ledger: `.agency/05-reports/`.
