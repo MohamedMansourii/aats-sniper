@@ -6,10 +6,10 @@
 > to it (they lagged a wave — see the 2026-07-03 review) so trust THIS file on any conflict.
 
 **Updated:** 2026-07-03 (post Wave 2C + loop-governance; Wave 3 in progress). **Branch:** `aats-sniper-build` ·
-**HEAD:** `931b58a` (verify `git log -1`). **Full suite:** `2965 passed / 0 failed`.
-**✅ Honest status:** SAFETY SPINE airtight (adversarially proven), and the Wave-2 catastrophic exits are now
-**WIRED LIVE + E2E-proven** (Wave 2C `7722294`). Milestones A + B complete. Wave 3 (chart-path architecture)
-building. Reviews + acceptance ledger: `.agency/05-reports/review/`.
+**HEAD:** `1eead58` (verify `git log -1`). **Full suite:** `3142 passed / 0 failed`.
+**✅ Honest status:** SAFETY SPINE airtight; Wave-2 exits WIRED LIVE + E2E-proven; **Wave 3 (Phase 2 regime
+architecture) DONE 4/5** (`1eead58`) — CP-07 creator-outflow FAILED review, fix handed to **Codex work-package #1**.
+Milestones A+B complete, Phase 2 ~90% (regime model TRAINING is data-gated). Reviews + ledger: `.agency/05-reports/review/`.
 
 ---
 
@@ -37,11 +37,11 @@ integrated-live **and** GATE-A/GATE-B on the RECORDED corpus yield **GO/NO-GO**.
    EN1/Wave-1/E15/E16/E18/E19 — ✅ DONE, see `.agency/05-reports/review/ACCEPTANCE-LEDGER.md`. One OPEN
    decision: whether the Wave-2B ENTRY gates (deployer-rep/funding-age/lp-unlock-entry) wire into `snipe_loop` now
    or stay paper-neutral — currently paper-neutral (document if you change it).
-2. **Resume Wave 3** (chart-path architecture): `git stash list` → pop `wave3-wip-paused-for-review` +
-   `wave3-wip-agency-docs` (both preserved), then re-run
-   `Workflow({scriptPath:"C:\\dev\\aats\\.agency\\04-plan\\workflows\\wave3-chartpath.js", resumeFromRunId:"wf_74debb68-057"})`
-   (completed items replay from cache). NOTE: M2-CP-05 has NO dispatch entry in the ready script — add it or drop
-   its 20 pts from the Milestone-C tally. M2-CP-03/06 are DATA-BLOCKED (≥3,000 launches).
+2. **✅ Wave 3 DONE** (`1eead58`, 4/5 G3-PASS, suite 3142). **CP-07 (creator-outflow) fix = HYBRID:** Codex builds
+   it (`.agency/04-plan/codex-work-packages/CP-07-creator-outflow-fix.md`), then Claude runs the dual-G3 review-gate
+   on the result before committing (maker=Codex, checker=Claude — never Codex grading itself). Regime model
+   TRAINING + M2-CP-03/05/06 stay DATA-GATED (≥3,000 recorded launches).
+2b. **Wave 4 — detection completeness** (next Claude wave): `Workflow({scriptPath:"C:\\dev\\aats\\.agency\\04-plan\\workflows\\wave4-detection.js"})`.
 3. **Wave 4 — detection completeness:** `Workflow({scriptPath:"C:\\dev\\aats\\.agency\\04-plan\\workflows\\wave4-detection.js"})`.
 4. **Re-run the execution/custody audit** → grounds the wallet-linking / go-live runbook.
 5. **⭐ MILESTONE E — the EDGE PROOF (the gate).** GATE-A + GATE-B on the recorded corpus → GO/NO-GO. Nothing lifts `DRY_RUN`.
