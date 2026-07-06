@@ -5,11 +5,16 @@
 > This file is AUTHORITATIVE for live status; the companion docs under `.agency/04-plan/` are being reconciled
 > to it (they lagged a wave — see the 2026-07-03 review) so trust THIS file on any conflict.
 
-**Updated:** 2026-07-03 (post Wave 2C + loop-governance; Wave 3 in progress). **Branch:** `aats-sniper-build` ·
-**HEAD:** `1eead58` (verify `git log -1`). **Full suite:** `3142 passed / 0 failed`.
-**✅ Honest status:** SAFETY SPINE airtight; Wave-2 exits WIRED LIVE + E2E-proven; **Wave 3 (Phase 2 regime
-architecture) DONE 4/5** (`1eead58`) — CP-07 creator-outflow FAILED review, fix handed to **Codex work-package #1**.
-Milestones A+B complete, Phase 2 ~90% (regime model TRAINING is data-gated). Reviews + ledger: `.agency/05-reports/review/`.
+**Updated:** 2026-07-06 (edge proof RAN→NO-GO; corpus collector live). **Branch:** `aats-sniper-build` ·
+**HEAD:** `ba05fc9` (verify `git log -1`). **Full suite:** `3142 passed / 0 failed`.
+**✅ Honest status:** SAFETY SPINE airtight; Wave-2 exits WIRED LIVE + E2E-proven; Wave 3 (Phase 2 regime
+architecture) DONE 4/5 — CP-07 → Codex WP#1. Exec/custody **security audit DONE = PASS-WITH-CONDITIONS**
+(`.agency/05-reports/security/EXEC-CUSTODY-AUDIT-2026-07-06.md`; go-live blocker = build the real signer).
+**⭐ EDGE PROOF EXECUTED 2026-07-06 → NO-GO / UNPROVEN-NO-REAL-DATA** (GATE-A fail-closed on 0 outcomes; never
+fabricates — `.agency/05-reports/qa/EDGE-PROOF-2026-07-06.md`). **The in-repo PumpPortal recorder is bugged**
+(banks ~0; feed+RPC proven healthy) → bypassed by a WORKING standalone **labeled-corpus collector**
+(`C:/aats_shadow/_collector.py`, detached PID varies, entry+forward-outcome at 1m/5m/15m). Corpus now accruing
+autonomously. Reviews + ledger: `.agency/05-reports/`.
 
 ---
 
@@ -43,8 +48,20 @@ integrated-live **and** GATE-A/GATE-B on the RECORDED corpus yield **GO/NO-GO**.
    TRAINING + M2-CP-03/05/06 stay DATA-GATED (≥3,000 recorded launches).
 2b. **Wave 4 — detection completeness** (next Claude wave): `Workflow({scriptPath:"C:\\dev\\aats\\.agency\\04-plan\\workflows\\wave4-detection.js"})`.
 3. **Wave 4 — detection completeness:** `Workflow({scriptPath:"C:\\dev\\aats\\.agency\\04-plan\\workflows\\wave4-detection.js"})`.
-4. **Re-run the execution/custody audit** → grounds the wallet-linking / go-live runbook.
-5. **⭐ MILESTONE E — the EDGE PROOF (the gate).** GATE-A + GATE-B on the recorded corpus → GO/NO-GO. Nothing lifts `DRY_RUN`.
+4. **✅ Exec/custody security audit DONE** — PASS-WITH-CONDITIONS (`.agency/05-reports/security/EXEC-CUSTODY-AUDIT-2026-07-06.md`).
+   Go-live blocker: build the real isolated `aats-signer` (currently scaffold) + dep hash-lock/pip-audit. Post-edge-proof work.
+5. **⭐ MILESTONE E — the EDGE PROOF (the gate). EXECUTED 2026-07-06 → NO-GO / UNPROVEN-NO-REAL-DATA** (no resolved
+   outcomes yet). **The remaining path to a REAL verdict (in priority):**
+   - a) **Corpus** — the standalone collector (`C:/aats_shadow/_collector.py`) is accruing labeled data (entry+forward
+     outcome) autonomously. Restart if the PC rebooted: `python C:/aats_shadow/_collector.py` (detached). **Bitquery
+     archival is the FASTER path** (instant resolved history) — plan: `.agency/04-plan/PHASE-5-DATA-PLAN-bitquery.md`.
+   - b) **Outcome-labeling harness** = Codex WP#3 (`.agency/04-plan/codex-work-packages/OUTCOME-LABELING-HARNESS.md`) —
+     resolve the corpus into `TradeOutcome` records (leak-safe; Claude's `backtest-qa` gate is MANDATORY). NOTE: the
+     WP reads the recorder's `snapshots.jsonl`; the live collector emits `labeled_corpus.jsonl` ({entry,forward}) —
+     reconcile the reader to the collector format (or enrich collector entries with first-K-slot microstructure for the
+     FULL feature set; current collector entries are THIN = PumpPortal create fields only).
+   - c) **Re-run GATE-A/GATE-B** on the resolved corpus → the FIRST real GO/NO-GO with actual scoreboard numbers.
+   Nothing lifts `DRY_RUN` before a GO + owner authorization. 3 Codex packages ready: CP-07, Wave-4, outcome-harness.
 
 ## 3 · DONE LEDGER (verified + committed, newest first)
 | Commit | What | Honest note |
