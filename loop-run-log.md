@@ -25,6 +25,8 @@
 
 {"date":"2026-07-06","pattern":"loop-op","run":"corpus-recorder-persistent","outcome":"RUNNING (detached PID 21476)","tokens_estimate":0,"commit":null,"note":"Start-Process detached OS process (survives Claude turns + session limits) accruing up to 20000 pump.fun launches -> C:/aats_shadow. Phase-5 SNAPSHOT accrual (option A, self-managed). REMAINING Phase-5 pieces: (1) labeling harness to resolve outcomes into TradeOutcome records, (2) run GATE-A/GATE-B. Recorder dies only on PC sleep/reboot -> restart with: python C:\\aats_shadow\\_launch.py (detached)."}
 
+{"date":"2026-07-06","pattern":"edge-proof","run":"gate-a-gate-b-run","outcome":"NO-GO / UNPROVEN-NO-REAL-DATA","tokens_estimate":5000,"commit":"pending","note":"Phase 5 EXECUTED: GATE-A on 0 real outcomes -> fail-closed (ValueError, refuses to fabricate PnL); GATE-B min-sample not met. Scoreboard UNDEFINED (honest). HARD RULE: stay paper, no real funds. Path to GO = accrue corpus (recorder PID 21476 running) + build labeling harness + re-run. Artifact: .agency/05-reports/qa/EDGE-PROOF-2026-07-06.md"}
+
 ## Alerts This Period
 - 2026-07-06: Fable session limit hit mid-audit (resets ~12:40 Africa/Tunis) — agent dispatch paused until reset; main-loop (commits/docs/verify) + detached local processes still available.
 - 2026-07-06: persistent corpus recorder started (PID 21476) — Phase-5 snapshots now accruing autonomously; keep PC on.
