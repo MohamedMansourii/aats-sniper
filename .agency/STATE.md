@@ -1,124 +1,88 @@
 # AATS — STATE.md · MASTER RESUME SPINE
 
-> **READ THIS FILE FIRST.** Single source of truth for resuming the AATS elite-enhancement program across a
-> model switch. **You are the SAME worker continuing** — do not restart. Pick up at **§2 NEXT ACTIONS**.
-> This file is AUTHORITATIVE for live status; the companion docs under `.agency/04-plan/` are being reconciled
-> to it (they lagged a wave — see the 2026-07-03 review) so trust THIS file on any conflict.
+> **READ THIS FILE FIRST, THEN `.agency/RESUME-HERE.md`.** Single source of truth for resuming across a session
+> restart / model switch. **You are the SAME worker continuing** — the **Agency Runtime**. Do not restart from zero.
+> **Compacted 2026-07-06** after the CEO's checkpoint directive.
 
-**Updated:** 2026-07-06 (edge proof RAN→NO-GO; corpus collector live). **Branch:** `aats-sniper-build` ·
-**HEAD:** `ba05fc9` (verify `git log -1`). **Full suite:** `3142 passed / 0 failed`.
-**✅ Honest status:** SAFETY SPINE airtight; Wave-2 exits WIRED LIVE + E2E-proven; Wave 3 (Phase 2 regime
-architecture) DONE 4/5 — CP-07 → Codex WP#1. Exec/custody **security audit DONE = PASS-WITH-CONDITIONS**
-(`.agency/05-reports/security/EXEC-CUSTODY-AUDIT-2026-07-06.md`; go-live blocker = build the real signer).
-**⭐ EDGE PROOF RAN ON REAL DATA 2026-07-06 → NO-GO** (400 labeled launches, resolved 400/400; harness dual-G3 PASS
-`9161960`). GATE-B: thin-feature model (+0.311) < naive baseline (+0.619) — NO selection edge; GATE-A lower-95%
-bounds negative (not stat-positive). **CAVEAT: PRELIMINARY** — thin create-only features, coarse fidelity. `.agency/05-reports/qa/EDGE-PROOF-2026-07-06-REAL.md`.
-**⭐ MOMENTUM/REACTION entry @60s (leak-safe, dual-G3 PASS eb96193) RAN → NO-GO but FIRST GATE-B PASS**: model beats
-naive baseline (delta +0.041, lower95 +0.026>0) — first evidence of selection value; naive momentum LOSES money
-(honest). GATE-A FAIL (model selected only 2/497 — too selective on small corpus → not stat-positive). PATH = accrue
-thousands (collector v2 running, price-path+pressure) → re-run → GATE-A testable while GATE-B re-checked.
-`.agency/05-reports/qa/EDGE-PROOF-momentum-2026-07-06.md`. Real capital DISABLED. **The in-repo PumpPortal recorder is bugged**
-(banks ~0; feed+RPC proven healthy) → bypassed by a WORKING standalone **labeled-corpus collector**
-(`C:/aats_shadow/_collector.py`, detached PID varies, entry+forward-outcome at 1m/5m/15m). Corpus now accruing
-autonomously. Reviews + ledger: `.agency/05-reports/`.
+**Branch:** `aats-sniper-build` · **HEAD:** `071b1f5` (verify `git log -1`) · **Suite:** 3177 tests (green at last full run).
 
 ---
 
-## 0 · WHO YOU ARE / HOW TO OPERATE
-- You are the **Agency Runtime** (top-level session) per `C:\dev\aats\CLAUDE.md`. You **dispatch** specialized
-  subagents and enforce gates; **you write NO production code/specs/tests yourself.**
-- **Ultracode on:** run a **Workflow** per wave; adversarially dual-G3 everything; correctness > cost.
-- **Every wave = one sequential dual-G3 Workflow:** per item → build (owner) → `code-reviewer` **and**
-  `backtest-qa-engineer` in parallel → fix-loop (≤3). Items one-at-a-time (no overlapping-file races).
-- **After each wave:** *you* run the full suite yourself, commit + push, **reconcile the companion docs to STATE**,
-  and **write the dual-G3 acceptance artifact** under `.agency/05-reports/{review,qa}/` (the review found these
-  were missing — do not claim "accepted" without the artifact). Guards (keep them): build/fix agents must NOT run
-  git; reviewers must do NON-DESTRUCTIVE review.
+## 0 · HOW YOU OPERATE (non-negotiable)
+- You are the **Agency Runtime** (`C:\dev\aats\CLAUDE.md`): you **dispatch** specialized subagents + Workflows and
+  enforce gates. **You write NO production code/specs/tests yourself.**
+- **Ultracode ON** → a **Workflow per build**; adversarially **dual-G3** everything (correctness > cost).
+- **⛔ CODEX IS DROPPED.** The CEO revoked the Codex hand-off (2026-07-06). **Everything is built by YOU** via your
+  multi-agent Workflows/agent-swarm. The 3 docs in `.agency/04-plan/codex-work-packages/` are now **Claude Workflow
+  specs** (one — OUTCOME-LABELING-HARNESS — is already DONE; see §4).
+- **Wave-runner pattern (each build):** maker agent builds → **`code-reviewer` AND `backtest-qa-engineer` review in
+  parallel** (leak audit mandatory for anything touching the edge proof) → fix-loop ≤2 → both PASS = G3. Guards:
+  build/fix agents **must NOT run git**; reviewers do **NON-DESTRUCTIVE** review (never edit the tree).
+- **After each build:** *you* run the full suite, commit + push, write the acceptance artifact under
+  `.agency/05-reports/{qa,review}/`, and **reconcile this STATE**.
 
-## 1 · PURPOSE + STOP CONDITION
-Elite (competitor-parity), de-risk-only, then the **edge-proof gate**. Stop when all missions are G3-PASS **and**
-integrated-live **and** GATE-A/GATE-B on the RECORDED corpus yield **GO/NO-GO**. Real capital stays
-`DRY_RUN`-disabled until the CEO authorizes.
+## 1 · THE GOAL (6 phases) + HARD RULES
+**Goal:** an elite Solana meme-coin bot with a **proven** edge, then staged live trading — but ONLY if the edge proves.
+**HARD RULES (never violate):** (1) NO win-rate metric ever — success = positive expectancy **net of ~6% round-trip
+cost** with survivable risk; (2) NO real funds until Phase-5 edge proof returns **GO** AND security audit passes AND
+CEO authorizes; (3) point-in-time correct data only — no lookahead/leakage; (4) every signal may only **de-risk**;
+(5) money = int lamports/Decimal; (6) no secrets in code/logs.
+**Phases:** 1 Detection&Data ✅ · 2 Intelligence 🟠 · 3 Risk&Safety ✅ · 4 Execution&Custody (built-in-sim, go-live
+gated) · **5 ⭐ EDGE PROOF 🔒 (the gate — currently NO-GO, one promising signal)** · 6 Live (gated on GO + CEO auth).
 
-## 2 · NEXT ACTIONS — do these in order
-1. **✅ Wave 2C DONE** (`7722294`) — Wave-2 catastrophic exits now WIRED LIVE (`SlowLoopEnrichmentWiring` drives the
-   producers; E19 StateStore + fast_loop added; `test_e2e_catastrophic_exits.py` with a control test proves each
-   exit fires; classify_direction negation fixed). **Milestone B is now genuinely LIVE-WIRED.** ▸ NEXT CLEANUP
-   (small): reconcile MISSION-BOARD/MILESTONES to this STATE, and backfill per-item dual-G3 acceptance artifacts for
-   EN1/Wave-1/E15/E16/E18/E19 — ✅ DONE, see `.agency/05-reports/review/ACCEPTANCE-LEDGER.md`. One OPEN
-   decision: whether the Wave-2B ENTRY gates (deployer-rep/funding-age/lp-unlock-entry) wire into `snipe_loop` now
-   or stay paper-neutral — currently paper-neutral (document if you change it).
-2. **✅ Wave 3 DONE** (`1eead58`, 4/5 G3-PASS, suite 3142). **CP-07 (creator-outflow) fix = HYBRID:** Codex builds
-   it (`.agency/04-plan/codex-work-packages/CP-07-creator-outflow-fix.md`), then Claude runs the dual-G3 review-gate
-   on the result before committing (maker=Codex, checker=Claude — never Codex grading itself). Regime model
-   TRAINING + M2-CP-03/05/06 stay DATA-GATED (≥3,000 recorded launches).
-2b. **Wave 4 — detection completeness** (next Claude wave): `Workflow({scriptPath:"C:\\dev\\aats\\.agency\\04-plan\\workflows\\wave4-detection.js"})`.
-3. **Wave 4 — detection completeness:** `Workflow({scriptPath:"C:\\dev\\aats\\.agency\\04-plan\\workflows\\wave4-detection.js"})`.
-4. **✅ Exec/custody security audit DONE** — PASS-WITH-CONDITIONS (`.agency/05-reports/security/EXEC-CUSTODY-AUDIT-2026-07-06.md`).
-   Go-live blocker: build the real isolated `aats-signer` (currently scaffold) + dep hash-lock/pip-audit. Post-edge-proof work.
-5. **⭐ MILESTONE E — the EDGE PROOF (the gate). EXECUTED 2026-07-06 → NO-GO / UNPROVEN-NO-REAL-DATA** (no resolved
-   outcomes yet). **The remaining path to a REAL verdict (in priority):**
-   - a) **Corpus** — the standalone collector (`C:/aats_shadow/_collector.py`) is accruing labeled data (entry+forward
-     outcome) autonomously. Restart if the PC rebooted: `python C:/aats_shadow/_collector.py` (detached). **Bitquery
-     archival is the FASTER path** (instant resolved history) — plan: `.agency/04-plan/PHASE-5-DATA-PLAN-bitquery.md`.
-   - b) **Outcome-labeling harness** = Codex WP#3 (`.agency/04-plan/codex-work-packages/OUTCOME-LABELING-HARNESS.md`) —
-     resolve the corpus into `TradeOutcome` records (leak-safe; Claude's `backtest-qa` gate is MANDATORY). NOTE: the
-     WP reads the recorder's `snapshots.jsonl`; the live collector emits `labeled_corpus.jsonl` ({entry,forward}) —
-     reconcile the reader to the collector format (or enrich collector entries with first-K-slot microstructure for the
-     FULL feature set; current collector entries are THIN = PumpPortal create fields only).
-   - c) **Re-run GATE-A/GATE-B** on the resolved corpus → the FIRST real GO/NO-GO with actual scoreboard numbers.
-   Nothing lifts `DRY_RUN` before a GO + owner authorization. 3 Codex packages ready: CP-07, Wave-4, outcome-harness.
+## 2 · WHERE WE ARE — checkpoints DONE vs OPEN
+**DONE & COMMITTED:**
+- Phases 1–4 built + dual-G3'd across many waves (ingestion, features, nlp/sentiment, ml, reasoning, controller
+  triple-loop, execution/custody in sim, risk/guardrails live-wired, mev). Safety spine audited airtight.
+- **Exec/custody security audit = PASS-WITH-CONDITIONS** (`.agency/05-reports/security/EXEC-CUSTODY-AUDIT-2026-07-06.md`);
+  go-live blocker = build the real isolated signer (currently scaffold).
+- **Edge-proof machine BUILT + dual-G3 PASS** (leak-audited): `aats/backtest/outcome_harness.py`,
+  `momentum_harness.py`, `run_edge_proof.py` + `gate_a.py`/`gate_b.py`/`baseline.py`. Momentum params frozen.
+- **Live labeled-corpus collector** `C:/aats_shadow/_collector.py` (price-path + buy/sell pressure) accruing real data.
+- **Edge proof RUN on real data** (see §4).
 
-## 3 · DONE LEDGER (verified + committed, newest first)
-| Commit | What | Honest note |
-|---|---|---|
-| `7722294` | **Wave 2C** — Wave-2 catastrophic exits WIRED LIVE + E2E proof + classify_direction fix | ✅ Milestone B now genuinely live-wired; suite 2965 |
-| `9441359` | loop-governance install (LOOP.md + budget + run-log + control-plane reg) | loop-engineering PARTIAL→governed |
-| `a6a85ad` | program review recorded + STATE overclaims corrected | — |
-| `5209933` | STATE resume-spine update | — |
-| `abf2477` | E18 min-holder floor (WIRED) + E19 LP-unlock code | ⚠️ E19 open-position exit **NOT live-wired** (Wave 2C); E18 gate IS wired |
-| `1c70513` | E15 serial-deployer rep + E16 fresh-wallet | gates built + unit-tested; **entry-gate wiring into snipe_loop pending** (Wave 2C decision) |
-| `fbf4731` | Wave 2A — E14a/E14b insider-dump + E17 sellability | branches correct + tested; **flag producers NOT wired into live loop** (Wave 2C) |
-| `cce5440` | Wave 1 — alpha engine | velocity-sidecar + Telethon + live smart-wallet WIRED; **caller-score/CA half built-but-unwired** |
-| `7faccf5` | EN1 caller-score de-risk guard survives `python -O` | fully done |
-> E16 review-gate PASSED clean (`wf_642d4457-982`); the program review (`wf_459f6ac8-685`, 2026-07-03) is
-> recorded at `.agency/05-reports/review/PROGRAM-REVIEW-2026-07-03.md`.
+**OPEN (the real remaining work — all Claude-owned):**
+- **Phase 5 verdict is NO-GO.** Momentum strategy shows the FIRST GATE-B PASS but too few selected trades for GATE-A.
+  → **needs a larger corpus + re-run** (§3.1). This is the critical path.
+- Detection-completeness (`WAVE-4-detection-completeness.md`) + CP-07 creator-outflow fix (`CP-07-...md`) — now Claude
+  Workflows, NOT yet done. Lower priority than the edge verdict.
+- Real isolated signer build (Phase-4 go-live blocker) — ONLY after a GO.
 
-## 4 · INVARIANTS (never violate — the safety law) — AUDITED AIRTIGHT 2026-07-03
-1. No win-rate metric (success = net-of-cost PnL + model-vs-baseline on RECORDED data).
-2. `DRY_RUN` disabled until edge proven AND CEO authorizes.
-3. Asymmetric trust — signals ONLY de-risk (reject/shrink/down-weight≤1/exit); never size up/widen/raise/leverage.
-4. LLM/heavy models never on FAST/SNIPE (SLOW-loop; hot branch reads a pre-set flag).
-5. Point-in-time (T-300a): on-chain event-time only; no wall-clock in decision fields; no lookahead.
-6. Money int lamports/Decimal; no secrets in code/logs; custody = capped hot wallet + isolated Vault signer.
-7. Dual-G3 mandatory (code-reviewer AND backtest-qa PASS) **+ write the acceptance artifact** under `.agency/05-reports/`. Three strikes → HALT the wave + escalate (do not silently continue).
-8. **STANDING E2E GATE** (added after the 2026-07-03 review caught unwired exits): any feature that must ACT in a
-   live loop — an exit branch, a flag producer, a gate consumer — is **NOT** G3-PASS on unit tests alone; it needs
-   an END-TO-END integration test proving it fires in the running controller loop. "Green unit tests ≠ wired live."
-9. **Every wave appends one JSON line to `loop-run-log.md`** and reconciles the companion docs to this STATE.
+## 3 · NEXT ACTIONS (in strict order)
+1. **⭐ RE-RUN THE MOMENTUM EDGE PROOF when corpus ≥ ~3000** (check `wc -l < C:/aats_shadow/labeled_corpus.jsonl`):
+   ```
+   cd /c/dev/aats; export RPC_PRIMARY=$(grep '^RPC_PRIMARY=' .env | cut -d= -f2- | tr -d '\r'); export DRY_RUN_ENABLED=true
+   python -m aats.backtest.run_edge_proof --corpus C:/aats_shadow/labeled_corpus.jsonl --strategy momentum --entry-horizon 60 --out C:/aats_shadow/momentum_result.json
+   ```
+   Record the result as a dated artifact in `.agency/05-reports/qa/`, commit, update this STATE. **NEVER fabricate a
+   GO** — if GATE-A still fails, it stays NO-GO; accrue more / iterate features.
+2. **If GATE-B holds but GATE-A still marginal:** build (Workflow) **bonding-curve entry-price fidelity** (record
+   on-curve price at each horizon in the collector — kills DexScreener sparsity + the ~64s drift, raises the
+   selectable set) and/or improve outcome fidelity (realizable-exit sell-sim). Re-run.
+3. **If a real GO emerges:** re-run the security audit, build the real isolated signer, then Phase-6 devnet→tiny-real,
+   CEO-authorized only.
+4. **In parallel / lower priority (Claude Workflows):** Wave-4 detection completeness, CP-07 creator-outflow fix.
 
-## 5 · HOW TO DISPATCH
-- Ready scripts: `.agency/04-plan/workflows/{wave3-chartpath,wave4-detection}.js`. Copy the runner for Wave 2C.
-- Persisted patterns: `C:\Users\manso\.claude\projects\C--dev-aats\73613d2a-b726-4baf-9355-d5da5dff14ae\workflows\scripts\`.
-- Verify: `python -m pytest -p no:randomly -q`; ruff; secret grep; scaffold grep
-  (`grep -rnE 'if False|MUTATION-TEST' aats/ --include=*.py` — **ignore docstring `if False, …` param docs**, which
-  is why the acceptance gate's "must be 0" is wrong; the correct check excludes docstrings).
+## 4 · THE EDGE-PROOF JOURNEY (the heart of the project)
+- **Launch strategy (predict launch winners):** RAN real → **NO-GO** (model +0.311 < baseline +0.619; GATE-A lower-95%
+  negative). Honest: launch-winner prediction has no edge (expected). `EDGE-PROOF-2026-07-06-REAL.md`.
+- **Momentum/reaction entry @60s** (decide on ≤60s buy-pressure/price move, leak-safe): RAN real (497) → **NO-GO but
+  FIRST GATE-B PASS** — model **beats** the naive baseline (delta +0.041, lower-95% +0.026>0); naive momentum LOSES
+  money (−0.345/SOL). GATE-A FAIL: model selected only **2/497** (too selective → not stat-positive on tiny sample).
+  `EDGE-PROOF-momentum-2026-07-06.md`. **This is the promising thread — more data is the input needed.**
+- Caveats (documented): ~64s collector timing drift; DexScreener sparsity (93/497 unpriced@60s); horizon-compressed exit.
 
-## 6 · POINTERS
-- **Loop governance (AATS is now a registered L2 loop — SIM+BUILD ONLY):** `C:\dev\aats\LOOP.md` (constitution:
-  denylist + human gates + dispatch discipline) · `loop-budget.md` (caps + kill-switch) · `loop-run-log.md`
-  (append one JSON line per wave) · registered in `~/.claude/loops/CONTROL-PLANE.md`.
-- **Acceptance ledger** (per-wave dual-G3 evidence, EN1→Wave 2C): `.agency/05-reports/review/ACCEPTANCE-LEDGER.md`
-- Program review (honest verdict + findings): `.agency/05-reports/review/PROGRAM-REVIEW-2026-07-03.md`
-- Methodology review (loop/swarm compliance): `.agency/05-reports/review/METHODOLOGY-REVIEW-2026-07-03.md`
-- Missions/points: `MISSION-BOARD.md` (⚠️ being reconciled) · Architecture: `ELITE-ARCHITECTURE.md` ·
-  Milestones/rewards: `MILESTONES-ACCEPTANCE-REWARDS.md` · Directive/thesis: `00-brief/ELITE-ENHANCEMENT-DIRECTIVE.md`
+## 5 · ACTIVE PROCESSES (may need restart after reopen)
+- **Collector** `C:/aats_shadow/_collector.py` — detached OS process (was PID 22012), writing `labeled_corpus.jsonl`
+  (persists on disk; ~2100+ records at compaction, accruing ~1000/hr). A **detached process may survive a Claude
+  restart but NOT a reboot.** On resume: `tasklist | grep python` — if not running, restart detached:
+  `Start-Process python C:/aats_shadow/_collector.py -WindowStyle Hidden` (PowerShell) or `python C:/aats_shadow/_collector.py &`.
+  The corpus file is NEVER lost by restarting the collector (append-only).
 
-## 7 · KNOWN HAZARDS
-- Build agents crash on their FINAL report AFTER writing the code (E14b, E16). Check `git status` + suite for ground
-  truth; review-gate in-tree code.
-- Reviewers doing in-place mutation testing once corrupted the tree → non-destructive-review guard.
-- "Tests pass + unit-reviewed" ≠ "wired live." The 2026-07-03 review caught Wave-2 exits unwired despite green tests —
-  **always add an END-TO-END integration test that proves the feature fires in the running loop, not just in a unit.**
-- Infra: an org subscription-access block and a Fable session limit were both hit + resolved. `if False, …` strings in
-  `sell_sim.py`/`rpc_client.py` are DOCSTRINGS, not scaffolding.
+## 6 · INVARIANTS — see §1 HARD RULES. Audited airtight. Real capital stays `DRY_RUN`-disabled until GO + CEO auth.
+
+## 7 · KEY FILE MAP
+- Edge proof: `aats/backtest/{outcome_harness,momentum_harness,run_edge_proof}.py`, `aats/models/{gate_a,gate_b,baseline}.py`.
+- Collector (operational, outside repo): `C:/aats_shadow/_collector.py` → `labeled_corpus.jsonl`.
+- Results: `.agency/05-reports/qa/EDGE-PROOF-*.md` · Security: `.agency/05-reports/security/` · Run log: `loop-run-log.md`.
+- This spine: `.agency/STATE.md` + `.agency/RESUME-HERE.md` (the 60-second resume).
