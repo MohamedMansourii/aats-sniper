@@ -12,8 +12,12 @@ architecture) DONE 4/5 — CP-07 → Codex WP#1. Exec/custody **security audit D
 (`.agency/05-reports/security/EXEC-CUSTODY-AUDIT-2026-07-06.md`; go-live blocker = build the real signer).
 **⭐ EDGE PROOF RAN ON REAL DATA 2026-07-06 → NO-GO** (400 labeled launches, resolved 400/400; harness dual-G3 PASS
 `9161960`). GATE-B: thin-feature model (+0.311) < naive baseline (+0.619) — NO selection edge; GATE-A lower-95%
-bounds negative (not stat-positive). **CAVEAT: PRELIMINARY** — thin create-only features (no first-60s
-microstructure), coarse DexScreener-spot outcome fidelity. Real numbers + path: `.agency/05-reports/qa/EDGE-PROOF-2026-07-06-REAL.md`. **The in-repo PumpPortal recorder is bugged**
+bounds negative (not stat-positive). **CAVEAT: PRELIMINARY** — thin create-only features, coarse fidelity. `.agency/05-reports/qa/EDGE-PROOF-2026-07-06-REAL.md`.
+**⭐ MOMENTUM/REACTION entry @60s (leak-safe, dual-G3 PASS eb96193) RAN → NO-GO but FIRST GATE-B PASS**: model beats
+naive baseline (delta +0.041, lower95 +0.026>0) — first evidence of selection value; naive momentum LOSES money
+(honest). GATE-A FAIL (model selected only 2/497 — too selective on small corpus → not stat-positive). PATH = accrue
+thousands (collector v2 running, price-path+pressure) → re-run → GATE-A testable while GATE-B re-checked.
+`.agency/05-reports/qa/EDGE-PROOF-momentum-2026-07-06.md`. Real capital DISABLED. **The in-repo PumpPortal recorder is bugged**
 (banks ~0; feed+RPC proven healthy) → bypassed by a WORKING standalone **labeled-corpus collector**
 (`C:/aats_shadow/_collector.py`, detached PID varies, entry+forward-outcome at 1m/5m/15m). Corpus now accruing
 autonomously. Reviews + ledger: `.agency/05-reports/`.
