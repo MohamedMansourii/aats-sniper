@@ -40,6 +40,12 @@ import os
 import sys
 from pathlib import Path
 
+from aats.backtest.block_time_cache import (
+    DEFAULT_MAX_IN_FLIGHT,
+    BlockTimeCache,
+    default_cache_path,
+    prefetch_from_corpus,
+)
 from aats.backtest.momentum_harness import (
     DEFAULT_ENTRY_HORIZON_S,
     MomentumHarnessStats,
@@ -85,6 +91,29 @@ def _default_resolver(rpc_url: str | None) -> BlockTimeResolver:
     if not url:
         return _NullBlockTimeResolver()  # type: ignore[return-value]
     return RpcBlockTimeResolver(url)
+
+
+def _maybe_prefetch_resolver(
+    resolver: BlockTimeResolver,
+    corpus_path: str | Path,
+    *,
+    cache_path: str | None,
+    max_in_flight: int,
+) -> BlockTimeResolver:
+    """Turn a live (RPC) resolver into a CONCURRENT, DISK-CACHED prefetched resolver.
+
+    This is the perf path (bounded-concurrency getTransaction + a persistent signature cache):
+    the harness then resolves every block_time as an O(1) map lookup, with the SAME values and
+    the SAME fail-closed censoring as the sequential path.  A fail-closed `_NullBlockTimeResolver`
+    (no RPC configured) is passed through unchanged — there is nothing to resolve and the runner
+    fails closed exactly as before.
+    """
+    if isinstance(resolver, _NullBlockTimeResolver):
+        return resolver
+    cache = BlockTimeCache(cache_path) if cache_path else None
+    return prefetch_from_corpus(
+        corpus_path, resolver, cache=cache, max_in_flight=max_in_flight
+    )
 
 
 def run_edge_proof(
@@ -256,9 +285,31 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Momentum entry horizon T_ENTRY in seconds (default: {DEFAULT_ENTRY_HORIZON_S}). "
         "Only used when --strategy momentum.",
     )
+    parser.add_argument(
+        "--blocktime-cache",
+        default=default_cache_path(),
+        help="Persistent signature->block_time cache path (default: env BLOCKTIME_CACHE_PATH or "
+        "C:/aats_shadow/blocktime_cache.json). A confirmed tx's block_time is immutable, so warm "
+        "re-runs are near-instant. Pass '' to disable the disk cache.",
+    )
+    parser.add_argument(
+        "--resolve-concurrency",
+        type=int,
+        default=DEFAULT_MAX_IN_FLIGHT,
+        help="Max in-flight getTransaction calls when resolving block_times concurrently "
+        f"(default: {DEFAULT_MAX_IN_FLIGHT}). Deterministic regardless of concurrency.",
+    )
     args = parser.parse_args(argv)
 
     resolver = _default_resolver(args.rpc_url)
+    # PERF: concurrently prefetch + disk-cache the corpus's block_times (identical values &
+    # censoring as the sequential path). A no-RPC fail-closed resolver is passed through as-is.
+    resolver = _maybe_prefetch_resolver(
+        resolver,
+        args.corpus,
+        cache_path=(args.blocktime_cache or None),
+        max_in_flight=args.resolve_concurrency,
+    )
     exit_code, scoreboard = run_edge_proof(
         args.corpus,
         block_time_resolver=resolver,

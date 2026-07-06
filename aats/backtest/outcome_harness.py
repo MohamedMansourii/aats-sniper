@@ -115,6 +115,17 @@ class BlockTimeUnavailable(RuntimeError):
     given a fabricated anchor — fail closed (T-300a)."""
 
 
+class RateLimitedError(BlockTimeUnavailable):
+    """A TRANSIENT rate-limit / throttle (HTTP 429/503 or JSON-RPC -32005) — RETRYABLE.
+
+    Distinct from a genuine `BlockTimeUnavailable` so the concurrent resolver can tell
+    'throttled, back off and retry me' apart from 'genuinely unresolvable, CENSOR me'.  It
+    SUBCLASSES `BlockTimeUnavailable` so that if it ever escapes the retry layer it is still
+    caught by the harness's fail-closed `except BlockTimeUnavailable` (CENSORED, never a
+    fabricated anchor).  Retrying a throttle yields the SAME immutable on-chain block_time the
+    un-throttled sequential path would return — it changes latency, never the resolved value."""
+
+
 class CorpusRecordError(ValueError):
     """Raised when a corpus line is structurally unusable (missing/!-numeric entry
     fields, no forward observations).  The record is CENSORED, never defaulted."""
@@ -190,6 +201,7 @@ class RpcBlockTimeResolver:
         self._url = rpc_url
 
     def resolve(self, signature: str) -> BlockTime:
+        import urllib.error
         import urllib.request
 
         body = json.dumps(
@@ -209,10 +221,32 @@ class RpcBlockTimeResolver:
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 (env-provided URL)
                 payload = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            # HTTP 429 (Too Many Requests) / 503 (overloaded) are TRANSIENT throttles: RETRY.
+            if exc.code in (429, 503):
+                raise RateLimitedError(
+                    f"getTransaction throttled (HTTP {exc.code}) for {signature[:12]}... (RETRY)"
+                ) from exc
+            raise BlockTimeUnavailable(
+                f"getTransaction failed (HTTP {exc.code}) for {signature[:12]}... (CENSORED)"
+            ) from exc
         except Exception as exc:  # network/parse failure -> CENSORED, never fabricate
             raise BlockTimeUnavailable(
                 f"getTransaction failed for {signature[:12]}... (CENSORED)"
             ) from exc
+        # Some providers return HTTP 200 with a JSON-RPC error body for throttling — detect it
+        # so a rate-limit is RETRIED, not silently CENSORED.
+        error = payload.get("error")
+        if isinstance(error, dict):
+            code = error.get("code")
+            msg = str(error.get("message", "")).lower()
+            if code == -32005 or "rate" in msg or "too many" in msg:
+                raise RateLimitedError(
+                    f"getTransaction throttled (JSON-RPC {code}) for {signature[:12]}... (RETRY)"
+                )
+            raise BlockTimeUnavailable(
+                f"getTransaction returned error for {signature[:12]}... (CENSORED)"
+            )
         result = payload.get("result")
         if not isinstance(result, dict):
             raise BlockTimeUnavailable(
