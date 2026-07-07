@@ -1,5 +1,33 @@
 # ▶ RESUME HERE — AATS (60-second orientation)
 
+## 🚦 CONTINUOUS-DRIVE STATE (2026-07-07 — STANDING ORDER: drive to completion, DO NOT STOP)
+CEO issued **CONTINUOUS AUTONOMOUS DRIVE MODE**. Do NOT wait for "continue". Chain work until: scope done / a
+real CAPITAL escalation / a hard blocker / the decisive reaction GO-NO-GO. End every turn on an ACTION, never a question.
+Iron rules hold (no real capital without proven GO + audit + CEO auth; no fabricated GO; dual-G3 every deliverable).
+
+**IN-FLIGHT WORKFLOWS** — gate each with dual-G3 on completion (ground-truth: `git status` + run the FULL suite
+yourself; a build agent can crash on its final report while its edits ARE in the tree), commit on PASS via
+`git pull --rebase --autostash` then push:
+- `wjdwzovju` (runId wf_1207b3ec-b18) — **EDGE-PROOF COMPLETION**: real-corpus purged/embargoed walk-forward +
+  effective-sample GATE-B floor + certify `reaction_harness.py` (tests). Lane: `aats/backtest` + `aats/models`.
+- `wczblnbbu` (runId wf_cddc4d98-dc3) — **REAL ADR-0009 SIGNER**: enforcer (per-tx/rolling caps + program allowlist +
+  tip pin + refusals) + remove `MockSignerClient/MockRpcClient` defaults + refusal tests. Lane: `rust/aats-signer` + `aats/execution`.
+  NOTE: both share the main working tree — when gating, re-run the suite AFTER both land to avoid cross-edit false failures.
+
+**CHAIN PLAN (next in-bounds units, §0.2 edge-first):**
+1. Gate + commit the two in-flight workflows.
+2. **CP-07 creator-outflow fix + Wave-4 detection completeness** (lane `aats/ingestion`) — next workflow.
+3. **DECISIVE REACTION VERDICT** — once edge-proof-completion lands AND the reaction corpus has volume: run the
+   walk-forward reaction GATE-A/GATE-B. **This resolves the project → SURFACE to CEO (pause reason #3).**
+4. **M4 live E2E** — once A wires the `None` safety producers (see `M4-PREFLIGHT-safety-posture-2026-07-07.md`).
+5. **Priority-2** (dashboard RED-2 + infra hardening) — ONLY if reaction returns GO.
+
+**Edge state:** launch+momentum NO-GO robust (n=5,992 realizable; model loses money; GATE-B "PASS" is decline-everything on ~8 decisions); reaction early NO-GO (n=436). **Capital DISABLED. No GO fabricated.**
+**Verification:** M1–M3, M5, M6 signed; M4 documented-blocked. Artifacts in `.agency/verification/`.
+
+---
+
+
 **You are the Agency Runtime** continuing the AATS Solana meme-coin bot. You dispatch Workflows/agents (dual-G3),
 you write no production code yourself. **Read `.agency/STATE.md` next for full detail.** Branch `aats-sniper-build`.
 
