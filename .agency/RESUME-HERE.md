@@ -18,12 +18,18 @@ directive: **this IS completion** — AATS is a proven-safe paper platform; Prio
 - DECISIVE reaction verdict RAN (NO-GO) — captured here + in STATE; standalone artifact
   `.agency/verification/DECISIVE-REACTION-VERDICT-2026-07-07.md` is PENDING (write was interrupted by the pause).
 
-### IN-FLIGHT (may be incomplete / killed by the pause — resume before trusting)
-- **Signer workflow** `wczblnbbu` · runId **`wf_cddc4d98-dc3`** · scriptPath
-  `C:\Users\manso\.claude\projects\C--dev-aats\251882c6-93d6-4da2-9cf8-f12679c40782\workflows\scripts\aats-real-signer-wf_cddc4d98-dc3.js`
-  — building the real ADR-0009 signer (enforcer + refusal tests + remove mock defaults). **NOT gated, NOT committed.**
-  Resume: `Workflow({scriptPath, resumeFromRunId:"wf_cddc4d98-dc3"})` then dual-G3-gate + commit the signer lane.
-- Recorders: reaction recorder + launch collector (PID 22012) accruing autonomously (reaction 2,264; launch 16,707).
+### SIGNER WORKFLOW — COMPLETED, dual-G3 FAILED (committed WIP `a9a7cca`, NOT audit-passed, DO NOT ENABLE)
+`wf_cddc4d98-dc3` finished after 2 fix rounds. Enforcer is substantially real (338 execution tests pass incl 83
+refusal tests; wallet secret only in signer_process; hot core holds pubkey only; SOL/allowlist/tip paths
+un-bypassable; fails-loud-not-to-mock). **BLOCKER (custody audit):** the SPL-Token program is allowlisted but the
+value-transfer pin covers ONLY System-program ix — so Transfer/TransferChecked/SetAuthority/Burn/CloseAccount can
+sweep the token/wSOL position in ONE unguarded 0-priced signature → "one compromise ≤ float" fails for the token leg.
+**FIX (resume):** add enforcer **C6 SPL-Token/Token-2022 value-move guard** (default-deny non-emitted tags; pin
+Transfer/TransferChecked/CloseAccount destinations to wallet-owned accounts like C2; refuse SetAuthority/Burn; +
+refusal tests). This is an **ADR-0015 frozen-C-set delta** → route to solana-systems-architect (contract) +
+solana-execution-engineer (build), then re-audit with crypto-security-engineer. MOOT for capital (edge is NO-GO;
+DRY_RUN default holds; no capital path enabled). MINOR: rotate the real `GEYSER_TOKEN` in `.env` (plaintext, gitignored, read-only feed token).
+- Recorders: reaction recorder + launch collector (PID 22012) accruing autonomously (reaction 2,264+; launch 16,707+).
 
 ### UNCOMMITTED (signer lane — leave until the signer workflow is gated; do NOT mix with other commits)
 `aats/execution/{__init__,exceptions,jito_jupiter_venue,rpc_client,tx_builder,ed25519_field,signer_enforcer,signer_process,solana_wire}.py`,
@@ -31,10 +37,14 @@ directive: **this IS completion** — AATS is a proven-safe paper platform; Prio
 `tests/execution/{test_jito_jupiter_venue,test_ed25519_field,test_signer_enforcer,test_signer_process,test_solana_wire}.py`.
 
 ### NEXT UNIT (on resume, in order)
-1. Resume/gate the signer workflow `wf_cddc4d98-dc3`; if PASS, commit the signer lane (files above), message
-   `feat(execution): real ADR-0009 signer enforcer (dual-G3 PASS)`. Ground-truth first: `git status` + full suite.
-2. Write the standalone `DECISIVE-REACTION-VERDICT-2026-07-07.md` (content above) + update STATE with the final conclusion.
-3. **STOP — program complete.** CP-07 / M4 / Priority-2 are MOOT (edge NO-GO). No capital moves. Deliver the honest conclusion to the CEO.
+1. **Write the standalone `DECISIVE-REACTION-VERDICT-2026-07-07.md`** (content = THE HEADLINE above) and deliver the
+   honest final conclusion to the CEO. This is the program's answer.
+2. **(OPTIONAL, MOOT for capital)** If the signer is wanted for completeness: fix the BLOCKER — add the enforcer **C6
+   SPL-Token value-move guard** (ADR-0015 delta → solana-systems-architect + solana-execution-engineer) + re-audit.
+   The WIP is committed at `a9a7cca`, clearly marked NOT-audit-passed. Skippable — the edge is NO-GO so the signer
+   never goes live.
+3. **Rotate `GEYSER_TOKEN`** in `.env` → Vault ref (MINOR hygiene).
+4. **STOP — program complete.** CP-07 / M4 / Priority-2 are MOOT (edge NO-GO). **No capital moves, ever, without a proven GO that does not exist.**
 
 ---
 
