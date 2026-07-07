@@ -12,9 +12,12 @@ yield positive net-of-cost PnL, and does a quality filter beat "follow every sig
 program conclusion is: no solo-operator edge exists for this bot — stay paper.
 
 ## Signal sources (Session A, ingestion lane) — in tractability order
-1. **v1 — WHALE / large-early-buy (fully on-chain, NO external list needed).** Subscribe to the trade stream for fresh
-   tokens; a single buy above a size threshold (e.g. ≥ X SOL, param) is the signal. A smart-money PROXY that needs no
-   curated wallet set or credentials → buildable + testable here immediately.
+1. **v1 — WHALE / large-early-buy (fully on-chain, NO external list needed).** A single buy above a size threshold
+   (≥ X SOL, param) is the signal — a smart-money PROXY needing no curated wallet set or credentials.
+   **✅ DATA SOURCE CONFIRMED (2026-07-07):** PumpPortal's FREE WS gives creates only (0 trade events — verified).
+   The working free source is **Helius `logsSubscribe` on the pump.fun program** (`6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P`) —
+   verified ~100 tx/sec firehose of every buy/sell/create. Decode the `Program data:` anchor event per tx (reuse
+   `aats/ingestion/decoders.py`) → {mint, is_buy, sol_amount, trader, reserves→price}. Whale buy = is_buy ∧ sol_amount≥X.
 2. **v2 — SMART-MONEY-WALLET buys.** `aats/ingestion/smart_money.py` already subscribes to ≤20 tracked wallets'
    account-trades. Signal = a tracked wallet buys a token. **Data dependency: a curated set of proven smart-money
    wallets** (operator/config-provided; sourced from a paid API or a vetted public list — flagged, not free).
