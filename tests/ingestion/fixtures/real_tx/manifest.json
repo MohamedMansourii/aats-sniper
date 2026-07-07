@@ -1,0 +1,56 @@
+{
+  "pumpfun_buy": {
+    "block_time": 1783428333,
+    "log_names_observed": [
+      "Buy"
+    ],
+    "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "signature": "5dXHet2jjaDtJ2G3csTBTjKnbwk8oGvNuMgDR22MvtFCeLGZJ2a6VWnwFv6Zk1DdnfNBoYc6nr5QiPpdnWWrDemA",
+    "slot": 431378681
+  },
+  "pumpfun_sell": {
+    "block_time": 1783428333,
+    "log_names_observed": [
+      "Sell"
+    ],
+    "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "signature": "2tSj8KR2kYcEcrjMjcazFvg2tVK3npMagrgdRYXHXQ1ZqtBcYQwRsGeTgLDb6ph7bkvuae8xTVuagtQyVYpXf1Tz",
+    "slot": 431378681
+  },
+  "pumpswap_buy": {
+    "block_time": 1783428596,
+    "log_names_observed": [
+      "Buy",
+      "Sell"
+    ],
+    "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+    "signature": "4NBeWmwFGoKkunGRPMP2vSSJgMc9LemDTqiZPjJnU1CZPDNiNDLpa7qdp5hhchwiGQDnK2CF7vb3DSwRgxwYSz1i",
+    "slot": 431379322
+  },
+  "pumpswap_sell": {
+    "block_time": 1783428330,
+    "log_names_observed": [
+      "BuyExactSolIn",
+      "Sell"
+    ],
+    "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+    "signature": "2SGVwWpy2t5U8Y8RnUDUgoEQHmhHPPH6kcCzSLzA6Dx18nE3xfaiaLMhT1uqP7hgMFxTPAtoAqb2Ura8oiww5YHE",
+    "slot": 431378672
+  },
+  "raydium_cpmm_swap": {
+    "block_time": 1783428314,
+    "log_names_observed": [
+      "SwapBaseInput"
+    ],
+    "program_id": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+    "signature": "2Kd8P7whwJ4CVMMUZTs9uFUFJ8NPabf8rJYNoDET6WMEZx9YtNePo8jznNakMGjdMoe3Zpf8aaE34myeKLfjecYt",
+    "slot": 431378631
+  },
+  "raydium_v4_swap": {
+    "block_time": 1783428328,
+    "log_names_observed": [],
+    "program_id": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+    "signature": "6Ce5KxB6sJ8YmNGTvPnUyxnX48pDjKDXtnPzHzWL8dDBBiFFjzyxPcXfVSoazFEAgVHtkqDmfZV7EgNnt8H8yR8",
+    "slot": 431378669
+  }
+}

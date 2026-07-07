@@ -218,6 +218,21 @@ RAY_V4_INIT_ACCOUNT_IDX_PC_MINT = 9  # pc (quote) mint
 RAY_V4_INIT_ACCOUNT_IDX_COIN_VAULT = 10
 RAY_V4_INIT_ACCOUNT_IDX_PC_VAULT = 11
 
+# Raydium AMM v4 swap_base_in/swap_base_out account layout — VERIFIED against a
+# real captured mainnet signature (E-M1-05):
+#   6Ce5KxB6sJ8YmNGTvPnUyxnX48pDjKDXtnPzHzWL8dDBBiFFjzyxPcXfVSoazFEAgVHtkqDmfZV7EgNnt8H8yR8
+#   slot 431378669 (tests/ingestion/fixtures/real_tx/raydium_v4_swap.json).
+# Full layout: [tokenProgram, amm, ammAuthority, ammOpenOrders, poolCoinVault,
+#   poolPcVault, serumProgram, serumMarket, serumBids, serumAsks,
+#   serumEventQueue, serumCoinVault, serumPcVault, serumVaultSigner,
+#   userSourceToken, userDestToken, userSourceOwner(signer)].
+# index 0 is the SPL Token program (NOT the amm) — on the real captured tx,
+# accounts[1] is the pool's own amm_id and accounts[16] equals the
+# transaction's own fee_payer (the trader/signer), confirming both indices
+# byte-for-byte against real on-chain data.
+RAY_V4_SWAP_ACCOUNT_IDX_AMM_ID = 1
+RAY_V4_SWAP_ACCOUNT_IDX_USER_OWNER = 16
+
 # Raydium CPMM initialize account layout (verified from CPMM IDL)
 CPMM_INIT_ACCOUNT_IDX_POOL = 0
 CPMM_INIT_ACCOUNT_IDX_CREATOR = 1
@@ -1020,14 +1035,13 @@ class RaydiumV4Decoder:
         amount_in = struct.unpack_from("<Q", data, 1)[0]
         min_out = struct.unpack_from("<Q", data, 9)[0]
 
-        # Raydium swap accounts: [amm, authority, openOrders, targetOrders,
-        #   poolCoinVault, poolPcVault, serumProg, serumMkt, ..., userSource, userDest, userOwner]
-        # Coin vault is at index 4; the coin mint is recoverable from vault account
-        # For M1 purposes, we emit a buy/sell event with the trade amounts
-        _safe_get_account(ix.account_keys, 4)
-        user = _safe_get_account(ix.account_keys, 15) or tx.fee_payer
+        # Raydium swap accounts (RAY_V4_SWAP_ACCOUNT_IDX_* — verified against a
+        # real captured signature, see the constants' docstring above):
+        #   [tokenProgram, amm, ammAuthority, ammOpenOrders, poolCoinVault,
+        #    poolPcVault, serumProgram, serumMarket, ..., userSourceOwner]
         # The mint is not directly in swap accounts; we use the amm_id as the identifier
-        amm_id = _safe_get_account(ix.account_keys, 0) or ""
+        user = _safe_get_account(ix.account_keys, RAY_V4_SWAP_ACCOUNT_IDX_USER_OWNER) or tx.fee_payer
+        amm_id = _safe_get_account(ix.account_keys, RAY_V4_SWAP_ACCOUNT_IDX_AMM_ID) or ""
 
         event_time = _make_event_time(tx.slot, tx.block_time_unix_s)
         if event_time is None:

@@ -34,9 +34,7 @@ import asyncio
 import base64
 import hashlib
 import os
-import struct
 import sys
-from typing import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -57,7 +55,6 @@ from aats.ingestion.transport import (
     _bytes_to_base58,
 )
 from tests.ingestion.fixtures import PROGRAM_IDS, make_registry
-
 
 # ---------------------------------------------------------------------------
 # Helpers to construct proto fixture messages
@@ -845,7 +842,6 @@ class TestSubscribeStreamPath:
         captured_requests accumulates every SubscribeRequest yielded by
         the _request_iter passed into stub.Subscribe() so tests can assert on it.
         """
-        import grpc.aio
 
         captured_requests: list = []
 
@@ -870,7 +866,6 @@ class TestSubscribeStreamPath:
 
     def _patch_grpc(self, mock_channel, mock_stub):
         """Return a context manager that patches grpc.aio and geyser_pb2_grpc."""
-        import aats.ingestion.transport as transport_mod
 
         # We need to patch the GeyserStub constructor AND grpc.aio.secure_channel.
         # _stream_once imports grpc and grpc.aio locally; we patch at the
@@ -1240,3 +1235,88 @@ class TestSubscribeStreamPath:
             asyncio.run(run())
 
         assert transport.is_connected is False
+
+
+class TestShredstreamEndpointGuard:
+    """E-M1-07: shredstream_endpoint used to be accepted, stored on
+    GeyserTransport, and NEVER read again -- a silent no-op.  These tests
+    assert the dead param is now fail-loud instead of silently ignored:
+      - INFRA_TIER=colo_shred + a configured endpoint -> NotImplementedError
+        at construction time (refuse to start misconfigured, don't wait for
+        a live stream to discover the overlay is inert).
+      - A configured endpoint under any other INFRA_TIER -> not fatal (the
+        operator isn't relying on the overlay), but loudly logged so the
+        dead config is visible, never silent.
+      - No endpoint configured -> no-op, regardless of INFRA_TIER (nothing to
+        guard).
+    """
+
+    def test_colo_shred_with_endpoint_raises_not_implemented(self, monkeypatch):
+        monkeypatch.setenv("INFRA_TIER", "colo_shred")
+        with pytest.raises(NotImplementedError, match="ShredStream"):
+            GeyserTransport(
+                endpoint="fake-endpoint:443",
+                x_token="fake-token",
+                shredstream_endpoint="shred.example.com:443",
+            )
+
+    def test_colo_shred_without_endpoint_does_not_raise(self, monkeypatch):
+        """INFRA_TIER=colo_shred alone (no SHREDSTREAM_ENDPOINT) is not this
+        guard's concern -- nothing configured, nothing dead to guard."""
+        monkeypatch.setenv("INFRA_TIER", "colo_shred")
+        transport = GeyserTransport(
+            endpoint="fake-endpoint:443",
+            x_token="fake-token",
+            shredstream_endpoint=None,
+        )
+        assert transport is not None
+
+    def test_default_infra_tier_with_endpoint_logs_loudly_not_silent(
+        self, monkeypatch, caplog
+    ):
+        """No INFRA_TIER override (defaults to dedicated_geyser): a configured
+        shredstream_endpoint must not raise (the operator hasn't asked for the
+        overlay tier) but must be surfaced as a warning -- never silently
+        stored and ignored."""
+        monkeypatch.delenv("INFRA_TIER", raising=False)
+        with caplog.at_level("WARNING"):
+            transport = GeyserTransport(
+                endpoint="fake-endpoint:443",
+                x_token="fake-token",
+                shredstream_endpoint="shred.example.com:443",
+            )
+        assert transport is not None
+        assert any(
+            "shredstream_endpoint" in rec.getMessage()
+            and "stored only" in rec.getMessage()
+            for rec in caplog.records
+        ), "expected a loud warning about the dead shredstream_endpoint config"
+
+    def test_explicit_dedicated_geyser_with_endpoint_does_not_raise(
+        self, monkeypatch, caplog
+    ):
+        monkeypatch.setenv("INFRA_TIER", "dedicated_geyser")
+        with caplog.at_level("WARNING"):
+            transport = GeyserTransport(
+                endpoint="fake-endpoint:443",
+                x_token="fake-token",
+                shredstream_endpoint="shred.example.com:443",
+            )
+        assert transport is not None
+        assert any(
+            "shredstream_endpoint" in rec.getMessage() for rec in caplog.records
+        )
+
+    def test_no_endpoint_no_infra_tier_is_a_true_no_op(self, monkeypatch, caplog):
+        """The common/default case: nobody configured ShredStream at all.
+        No raise, no warning -- there is nothing to guard."""
+        monkeypatch.delenv("INFRA_TIER", raising=False)
+        with caplog.at_level("WARNING"):
+            transport = GeyserTransport(
+                endpoint="fake-endpoint:443",
+                x_token="fake-token",
+            )
+        assert transport is not None
+        assert not any(
+            "shredstream" in rec.getMessage().lower() for rec in caplog.records
+        )

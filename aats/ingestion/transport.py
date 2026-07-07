@@ -290,6 +290,39 @@ class GeyserTransport(TransportInterface):
         import random
         self._rng = random.Random()
 
+        # E-M1-07: shredstream_endpoint used to be accepted, stored, and NEVER
+        # read again — a silent no-op that let an operator believe a
+        # pre-confirmation ShredStream overlay was active when it was not.
+        # No ShredStream client is implemented in this transport.  Guard it
+        # fail-loud instead of silently ignoring a configured endpoint:
+        #   - INFRA_TIER=colo_shred explicitly asks for the ShredStream path
+        #     -> raise NotImplementedError (refuse to start misconfigured).
+        #   - shredstream_endpoint set but INFRA_TIER != colo_shred -> this is
+        #     still dead config; log loudly (not silent) so the operator sees
+        #     it, but don't block a run that isn't relying on it.
+        if self._shredstream_endpoint:
+            infra_tier = os.environ.get("INFRA_TIER", "dedicated_geyser")
+            if infra_tier == "colo_shred":
+                raise NotImplementedError(
+                    "GeyserTransport: SHREDSTREAM_ENDPOINT is configured and "
+                    "INFRA_TIER=colo_shred, but no ShredStream client is "
+                    "implemented in this transport. shredstream_endpoint is "
+                    "currently stored and never read -- refusing to start "
+                    "rather than silently no-op. Unset SHREDSTREAM_ENDPOINT / "
+                    "INFRA_TIER=colo_shred, or implement a ShredStream client "
+                    "before enabling this tier."
+                )
+            logger.warning(
+                "GeyserTransport: shredstream_endpoint=%r is configured but "
+                "INFRA_TIER=%r (not 'colo_shred'). No ShredStream client is "
+                "implemented in this transport -- this endpoint is NOT used, "
+                "it is stored only. This is dead configuration; unset "
+                "SHREDSTREAM_ENDPOINT or set INFRA_TIER=colo_shred to make "
+                "the misconfiguration fail loud instead.",
+                self._shredstream_endpoint,
+                infra_tier,
+            )
+
     @property
     def detection_transport(self) -> DetectionTransport:
         return DetectionTransport.GEYSER
