@@ -115,6 +115,12 @@ from aats.backtest.outcome_harness import (
     read_corpus,
     to_entry_record,
 )
+from aats.backtest.realizable_exit import (
+    EXIT_MODEL_REALIZABLE,
+    EXIT_MODELS,
+    RealizableParams,
+    realizable_gross_pnl,
+)
 from aats.contracts.intents import CostStack
 from aats.contracts.risk import RiskConfig
 from aats.models.gate_b import TradeOutcome
@@ -277,6 +283,7 @@ class MomentumForwardObservation:
     vol_m5: Decimal | None
     note: str
     obs_wall_ms: int
+    price_usd: Decimal | None = None  # exact USD price (outcome-realism only: derives SOL/USD)
 
     @property
     def buy_fraction(self) -> Decimal:
@@ -331,6 +338,7 @@ def read_momentum_forward(record: CorpusRecord) -> list[MomentumForwardObservati
                 vol_m5=_decimal_or_none(obs.get("vol_m5")),
                 note=str(obs.get("note", "")),
                 obs_wall_ms=int(obs.get("obs_wall_ms", 0)),
+                price_usd=_decimal_or_none(obs.get("price_usd")),
             )
         except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
             raise CorpusRecordError(
@@ -553,6 +561,8 @@ def resolve_momentum_outcome(
     sol_at_risk_lamports: int,
     decision_block_time_ms: int,
     engine: ExitEngine | None = None,
+    exit_model: str = EXIT_MODEL_REALIZABLE,
+    realizable_params: RealizableParams | None = None,
 ) -> OutcomeResult:
     """Resolve realized NET PnL from the `> T_ENTRY` marks only, filled at the T_ENTRY price.
 
@@ -562,11 +572,20 @@ def resolve_momentum_outcome(
     realized gross (which already includes the SECURE exit slippage) is taken NET of the
     remaining round-trip cost (total - exit slippage) so the exit cost is counted ONCE.
 
+    EXIT FIDELITY (`exit_model`, outcome-only — the `> T_ENTRY` marks are already post-decision,
+    so this never touches the decision or the moving leak boundary):
+      * `'realizable'` (DEFAULT): the spot proceeds are haircut for LIQUIDITY IMPACT + HONEYPOT
+        (unpriced or sub-floor-liquidity marks are unsellable => never realizable => near-total
+        loss). Realizable gross is ALWAYS <= spot gross.
+      * `'spot'`: the walk's spot proceeds unchanged (optimistic — parity/regression only).
+
     Raises `CorpusRecordError` (CENSORED) when there are no post-entry marks or the entry price
     is non-positive — never a fabricated outcome.
     """
     if not post_entry_marks:
         raise CorpusRecordError(f"{mint}: no post-T_ENTRY marks to resolve outcome (CENSORED)")
+    if exit_model not in EXIT_MODELS:
+        raise ValueError(f"unknown exit_model {exit_model!r} (expected one of {EXIT_MODELS})")
     if entry_price_sol <= 0:
         raise CorpusRecordError(f"{mint}: non-positive T_ENTRY entry price (CENSORED)")
 
@@ -590,19 +609,34 @@ def resolve_momentum_outcome(
         block_time_ms_start=decision_block_time_ms,
     )
 
+    # EXIT FIDELITY: haircut the spot proceeds to a realizable fill (or keep spot).  The
+    # post-entry marks ARE the outcome mark set — no decision/leak surface here.
+    gross_pnl_lamports, adj = realizable_gross_pnl(
+        spot_gross_lamports=walk.gross_pnl_lamports,
+        spot_proceeds_lamports=walk.proceeds_lamports,
+        marks=post_entry_marks,
+        notional_lamports=sol_at_risk_lamports,
+        exit_model=exit_model,
+        params=realizable_params,
+    )
+
     entry_side_bps = cost_stack.total_cost_bps - cost_stack.exit_slippage_bps
     round_trip_cost_lamports = int(
         Decimal(sol_at_risk_lamports) * Decimal(entry_side_bps) / Decimal(10_000)
     )
-    net_pnl = walk.gross_pnl_lamports - round_trip_cost_lamports
+    net_pnl = gross_pnl_lamports - round_trip_cost_lamports
 
     return OutcomeResult(
         net_pnl_lamports=int(net_pnl),
-        gross_pnl_lamports=int(walk.gross_pnl_lamports),
+        gross_pnl_lamports=int(gross_pnl_lamports),
         round_trip_cost_lamports=int(round_trip_cost_lamports),
         realized_multiple=(multiples[-1] if multiples else Decimal(0)),
         n_forward_marks=len(multiples),
         rugged=rugged,
+        exit_model=exit_model,
+        spot_gross_pnl_lamports=int(walk.gross_pnl_lamports),
+        realizable_deduction_lamports=(adj.deduction_lamports if adj is not None else 0),
+        sellable_market_existed=(adj.sellable_market_existed if adj is not None else True),
     )
 
 
@@ -632,6 +666,7 @@ def build_momentum_outcomes(
     risk_config: RiskConfig | None = None,
     cost_stack: CostStack | None = None,
     entry_horizon_s: int = DEFAULT_ENTRY_HORIZON_S,
+    exit_model: str = EXIT_MODEL_REALIZABLE,
 ) -> tuple[list[TradeOutcome], MomentumHarnessStats]:
     """Turn recorded launches into `TradeOutcome` records under the MOMENTUM-entry strategy.
 
@@ -646,10 +681,15 @@ def build_momentum_outcomes(
     The DECISION and OUTCOME are computed by two functions that never share an argument — the
     (moving, T_ENTRY) structural leak boundary.
 
+    `exit_model` selects the OUTCOME fidelity (default `'realizable'`: liquidity impact +
+    honeypot; `'spot'`: optimistic parity). It NEVER changes the decision or the leak boundary.
+
     Raises `ValueError` (fail-loud) BEFORE the loop if `entry_horizon_s` is off the corpus horizon
     grid: an off-grid horizon would silently decline every record (a misleading all-NO-GO).
     """
     _validate_entry_horizon(entry_horizon_s)
+    if exit_model not in EXIT_MODELS:
+        raise ValueError(f"unknown exit_model {exit_model!r} (expected one of {EXIT_MODELS})")
     rconfig = risk_config or RiskConfig()
     cstack = cost_stack or build_round_trip_cost_stack()
     engine = ExitEngine(config=preset("secure_balanced"))
@@ -700,6 +740,7 @@ def build_momentum_outcomes(
                 sol_at_risk_lamports=decision.sol_at_risk_lamports,
                 decision_block_time_ms=momentum_decision_cutoff_ms(entry, entry_horizon_s),
                 engine=engine,
+                exit_model=exit_model,
             )
             n_tradeable += 1
             outcomes.append(
@@ -741,6 +782,7 @@ def build_momentum_from_corpus(
     risk_config: RiskConfig | None = None,
     cost_stack: CostStack | None = None,
     entry_horizon_s: int = DEFAULT_ENTRY_HORIZON_S,
+    exit_model: str = EXIT_MODEL_REALIZABLE,
 ) -> tuple[list[TradeOutcome], MomentumHarnessStats]:
     """Convenience: read a corpus file and build the momentum TradeOutcome list in one call."""
     return build_momentum_outcomes(
@@ -750,4 +792,5 @@ def build_momentum_from_corpus(
         risk_config=risk_config,
         cost_stack=cost_stack,
         entry_horizon_s=entry_horizon_s,
+        exit_model=exit_model,
     )

@@ -27,15 +27,20 @@ def _write_corpus(path, records: list[dict]) -> None:
     path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
 
 
-def _rec_dict(mint, sig, *, sol_amount, v_sol_sol, forward_multiples, v_tokens="1000000000"):
+def _rec_dict(
+    mint, sig, *, sol_amount, v_sol_sol, forward_multiples, v_tokens="1000000000",
+    liquidity_usd="5000",
+):
     from decimal import Decimal
 
     entry_price = Decimal(v_sol_sol) / Decimal(v_tokens)
     forward = []
     for horizon, mult in zip((60, 300, 900), forward_multiples, strict=True):
         price = None if mult is None else str(entry_price * Decimal(mult))
+        price_usd = None if mult is None else str(entry_price * Decimal(mult) * Decimal("150"))
         forward.append(
-            {"price_sol": price, "liquidity_usd": None, "dex": "pumpfun", "note": "ok",
+            {"price_sol": price, "price_usd": price_usd, "liquidity_usd": liquidity_usd,
+             "dex": "pumpfun", "note": "ok",
              "horizon_s": horizon, "obs_wall_ms": 1_700_000_000_000 + horizon * 1000}
         )
     entry = {

@@ -1,0 +1,44 @@
+{
+  "_comment": [
+    "FROZEN realizable-exit outcome-realism constants. DO NOT EDIT (retune) after the first",
+    "realizable edge-proof run. This is the audit-parity twin of MOMENTUM_PARAMS.frozen.json and",
+    "baseline.frozen.json: it externalizes the realizable-exit model's constants so they are a",
+    "declared, change-controlled artifact rather than magic numbers buried in code (anti-p-hacking).",
+    "",
+    "The canonical hash in `frozen_hash` is recomputed deterministically from `params` alone",
+    "(aats/backtest/realizable_exit.py: _canonical_realizable_hash); a test FAILS if any hashed",
+    "value drifts. Every numeric is a Decimal-as-STRING, never a float (data-models.md §0).",
+    "",
+    "THE MODEL (realizable_exit.py): the OUTCOME fill is worse than the optimistic SPOT mark by",
+    "(1) LIQUIDITY IMPACT — slip = min(max_slippage_fraction, linear_impact_coeff * notional_usd /",
+    "representative_liquidity_usd), where notional = the sizer's per_trade_cap and representative",
+    "liquidity is the THINNEST sellable book in the hold window; and (2) HONEYPOT — a mark that is",
+    "unpriced OR whose liquidity_usd is null / below min_liquidity_usd_floor is UNSELLABLE; a",
+    "position never sellable in its window recovers only honeypot_residual_bps of notional (a",
+    "near-total loss minus fees). REALIZABLE net PnL is ALWAYS <= SPOT net PnL (realism only lowers",
+    "PnL); the ~6% round-trip cost stack (build_round_trip_cost_stack) stacks ON TOP of this.",
+    "",
+    "FROZEN — MUST NOT BE TUNED AGAINST THE CORPUS. Changing a value here is p-hacking the OUTCOME",
+    "against the scoreboard; it is a TEST FAILURE, not an edit. Open an ADR + delta notice instead.",
+    "See aats/models/artifacts/MODEL_CARD_realizable_exit.md."
+  ],
+  "schema_version": "1.0.0",
+  "params": {
+    "linear_impact_coeff": "1.0",
+    "max_slippage_fraction": "0.90",
+    "min_liquidity_usd_floor": "500",
+    "honeypot_residual_bps": "0",
+    "sol_usd_fallback": "150"
+  },
+  "params_provenance": {
+    "linear_impact_coeff": "First-order (constant-product) price-impact coefficient. slip_fraction = coeff * notional_usd / liquidity_usd (capped). 1.0 = selling a notional equal to X% of pool liquidity costs ~X% slippage — a conservative, defensible first-order impact. Illustrative structural constant, NOT fitted. Decimal-as-string.",
+    "max_slippage_fraction": "Hard cap on a single realizable exit's slippage fraction (0..1). 0.90 => a SELLABLE exit always keeps at least 10% of spot proceeds; it prevents the linear model from producing an unbounded haircut that would double-count the honeypot branch. Decimal-as-string.",
+    "min_liquidity_usd_floor": "A forward mark whose liquidity_usd is null OR strictly below this (USD) is UNSELLABLE at decision-relevant size (no real, non-honeypot exit market). 500 = a structural real-market floor for a 0.1-SOL sniper exit; null liquidity is always unsellable. Decimal-as-string.",
+    "honeypot_residual_bps": "Residual recovery (bps of notional) on a position that is NEVER sellable in its hold window. 0 = a total loss of the notional (minus fees) — the 'near-total loss' the task requires; never assume an exit at a price you could not realize. Integer bps as Decimal-as-string.",
+    "sol_usd_fallback": "Coarse SOL/USD rate used ONLY when a mark carries no price_usd to derive the true rate from (rate = price_usd / price_sol). The live corpus carries price_usd, so this fallback is rarely used; it is a clearly-labeled coarse default, not a fitted level. Decimal-as-string."
+  },
+  "invariant": "REALIZABLE net_pnl <= SPOT net_pnl for the same path, always (realism only lowers PnL). Enforced by construction (realizable_gross = spot_gross - non_negative_deduction) + a clamp, and asserted by tests/backtest/test_realizable_exit.py.",
+  "frozen_at_first_fit": true,
+  "first_fit_recorded_at_ms": 1783440000000,
+  "frozen_hash": "53b56b6296aec1616b9332ddab835660ec399e77b708f5f1d9145d11f760a777"
+}

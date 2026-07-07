@@ -57,16 +57,25 @@ def _record(
     forward_multiples: list[str | None],
     v_tokens: str = "1000000000",
     recv_wall_ms: int = _RECV_WALL_MS,
+    liquidity_usd: str | None = "5000",
 ) -> CorpusRecord:
-    """Build a corpus record whose forward prices realize the given multiples of entry price."""
+    """Build a corpus record whose forward prices realize the given multiples of entry price.
+
+    `liquidity_usd` defaults to a healthy, sellable book ("5000") so the DEFAULT realizable exit
+    model treats these fixtures as a real market (a tiny liquidity haircut); pass `None` for the
+    honeypot/unsellable case. `price_usd` is derived at a fixed SOL/USD (150) so the realizable
+    model's SOL/USD derivation is exercised on real corpus-shaped data.
+    """
     entry_price = Decimal(v_sol_sol) / Decimal(v_tokens)  # SOL per token
     forward = []
     for horizon, mult in zip((60, 300, 900), forward_multiples, strict=True):
         price = None if mult is None else str(entry_price * Decimal(mult))
+        price_usd = None if mult is None else str(entry_price * Decimal(mult) * Decimal("150"))
         forward.append(
             {
                 "price_sol": price,
-                "liquidity_usd": None,
+                "price_usd": price_usd,
+                "liquidity_usd": liquidity_usd,
                 "dex": "pumpfun",
                 "note": "ok",
                 "horizon_s": horizon,

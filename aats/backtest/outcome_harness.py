@@ -71,6 +71,12 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Protocol
 
+from aats.backtest.realizable_exit import (
+    EXIT_MODEL_REALIZABLE,
+    EXIT_MODELS,
+    RealizableParams,
+    realizable_gross_pnl,
+)
 from aats.contracts.events import EventTime
 from aats.contracts.features import (
     FeatureProvenance,
@@ -331,6 +337,7 @@ class ForwardObservation:
     dex: str
     note: str
     obs_wall_ms: int  # observation wall-clock — monitoring only
+    price_usd: Decimal | None = None  # exact USD price (outcome-realism only: derives SOL/USD)
 
     @property
     def forward_event_block_time_ms_after(self) -> int:
@@ -346,6 +353,7 @@ class EmbeddedForwardPriceSource:
         for obs in record.forward:
             price_raw = obs.get("price_sol")
             liq_raw = obs.get("liquidity_usd")
+            usd_raw = obs.get("price_usd")
             out.append(
                 ForwardObservation(
                     horizon_s=int(obs["horizon_s"]),
@@ -354,6 +362,7 @@ class EmbeddedForwardPriceSource:
                     dex=str(obs.get("dex", "")),
                     note=str(obs.get("note", "")),
                     obs_wall_ms=int(obs.get("obs_wall_ms", 0)),
+                    price_usd=(Decimal(str(usd_raw)) if usd_raw is not None else None),
                 )
             )
         # Order by horizon (event-time order) — the walk consumes marks in order.
@@ -603,6 +612,12 @@ class OutcomeResult:
     realized_multiple: Decimal  # last forward mark / entry price (audit; 0 = rugged/dead)
     n_forward_marks: int
     rugged: bool  # True iff any forward horizon reported NO market (price_sol is None)
+    # Exit-fidelity audit (outcome-realism, never a decision field). Defaults keep spot callers
+    # byte-identical to the pre-realism harness.
+    exit_model: str = "spot"
+    spot_gross_pnl_lamports: int = 0  # the spot gross before realism (== gross when spot mode)
+    realizable_deduction_lamports: int = 0  # >= 0: how much realism lowered the spot gross
+    sellable_market_existed: bool = True  # False = honeypot (never sellable) -> near-total loss
 
 
 def _mint_walk_seed(mint: str) -> int:
@@ -618,6 +633,8 @@ def resolve_outcome(
     cost_stack: CostStack,
     sol_at_risk_lamports: int,
     engine: ExitEngine | None = None,
+    exit_model: str = EXIT_MODEL_REALIZABLE,
+    realizable_params: RealizableParams | None = None,
 ) -> OutcomeResult:
     """Resolve the realized NET PnL from the FORWARD price path (forward-time data ONLY).
 
@@ -627,11 +644,21 @@ def resolve_outcome(
     gross PnL (which already includes the SECURE exit slippage) is then taken NET of the
     remaining round-trip cost (total - exit slippage) so the exit cost is counted once.
 
+    EXIT FIDELITY (`exit_model`, outcome-only — never touches the decision or leak boundary):
+      * `'realizable'` (DEFAULT): the walk's SPOT proceeds are haircut for LIQUIDITY IMPACT
+        (selling `per_trade_cap` into the thinnest sellable book) and HONEYPOT / unsellable marks
+        (unpriced or sub-floor liquidity => never realizable => near-total loss).  The realizable
+        gross is ALWAYS <= the spot gross (`realizable_exit.realizable_gross_pnl`).
+      * `'spot'`: the walk's spot proceeds unchanged (optimistic — parity/regression only).
+    The ~6% round-trip cost stack still stacks ON TOP of the (realizable or spot) gross.
+
     Raises `CorpusRecordError` (CENSORED) when the path is empty or the entry price is
     non-positive — never a fabricated outcome.
     """
     if not forward_path:
         raise CorpusRecordError(f"{entry.mint}: no forward observations (CENSORED)")
+    if exit_model not in EXIT_MODELS:
+        raise ValueError(f"unknown exit_model {exit_model!r} (expected one of {EXIT_MODELS})")
     entry_price = entry.entry_price_sol  # Decimal, entry-time (raises if v_tokens <= 0)
     if entry_price <= 0:
         raise CorpusRecordError(f"{entry.mint}: non-positive entry price (CENSORED)")
@@ -657,21 +684,36 @@ def resolve_outcome(
         block_time_ms_start=entry.decision_block_time_ms,
     )
 
+    # EXIT FIDELITY: turn the optimistic spot gross into a realizable one (or keep spot).
+    # `forward_path` is the OUTCOME (post-decision) mark set — no decision/leak surface here.
+    gross_pnl_lamports, adj = realizable_gross_pnl(
+        spot_gross_lamports=walk.gross_pnl_lamports,
+        spot_proceeds_lamports=walk.proceeds_lamports,
+        marks=forward_path,
+        notional_lamports=sol_at_risk_lamports,
+        exit_model=exit_model,
+        params=realizable_params,
+    )
+
     # Round-trip cost NET of the exit slippage already realized inside the walk (no double
     # count). Exact integer lamports from integer bps.
     entry_side_bps = cost_stack.total_cost_bps - cost_stack.exit_slippage_bps
     round_trip_cost_lamports = int(
         Decimal(sol_at_risk_lamports) * Decimal(entry_side_bps) / Decimal(10_000)
     )
-    net_pnl = walk.gross_pnl_lamports - round_trip_cost_lamports
+    net_pnl = gross_pnl_lamports - round_trip_cost_lamports
 
     return OutcomeResult(
         net_pnl_lamports=int(net_pnl),
-        gross_pnl_lamports=int(walk.gross_pnl_lamports),
+        gross_pnl_lamports=int(gross_pnl_lamports),
         round_trip_cost_lamports=int(round_trip_cost_lamports),
         realized_multiple=(multiples[-1] if multiples else Decimal(0)),
         n_forward_marks=len(multiples),
         rugged=rugged,
+        exit_model=exit_model,
+        spot_gross_pnl_lamports=int(walk.gross_pnl_lamports),
+        realizable_deduction_lamports=(adj.deduction_lamports if adj is not None else 0),
+        sellable_market_existed=(adj.sellable_market_existed if adj is not None else True),
     )
 
 
@@ -764,6 +806,7 @@ def build_trade_outcomes(
     baseline_params: BaselineParams | None = None,
     risk_config: RiskConfig | None = None,
     cost_stack: CostStack | None = None,
+    exit_model: str = EXIT_MODEL_REALIZABLE,
 ) -> tuple[list[TradeOutcome], HarnessStats]:
     """Turn recorded launches into `TradeOutcome` records — the Phase-5 deliverable.
 
@@ -772,9 +815,14 @@ def build_trade_outcomes(
     outcome from forward-only data, and emit ONE `TradeOutcome`.  A record whose block_time
     cannot be resolved or whose data is unusable is CENSORED (dropped), never fabricated.
 
+    `exit_model` selects the OUTCOME fidelity (default `'realizable'`: liquidity impact +
+    honeypot; `'spot'`: optimistic parity). It NEVER changes the decision or the leak boundary.
+
     Returns (outcomes, stats).  The DECISION and OUTCOME are computed by two functions that
     never share an argument — the structural leak boundary.
     """
+    if exit_model not in EXIT_MODELS:
+        raise ValueError(f"unknown exit_model {exit_model!r} (expected one of {EXIT_MODELS})")
     fsrc = forward_source or EmbeddedForwardPriceSource()
     bparams = baseline_params or load_params()
     rconfig = risk_config or RiskConfig()
@@ -801,6 +849,7 @@ def build_trade_outcomes(
                 cost_stack=cstack,
                 sol_at_risk_lamports=decision.sol_at_risk_lamports,
                 engine=engine,
+                exit_model=exit_model,
             )
             outcomes.append(
                 TradeOutcome(
@@ -833,6 +882,7 @@ def build_from_corpus(
     baseline_params: BaselineParams | None = None,
     risk_config: RiskConfig | None = None,
     cost_stack: CostStack | None = None,
+    exit_model: str = EXIT_MODEL_REALIZABLE,
 ) -> tuple[list[TradeOutcome], HarnessStats]:
     """Convenience: read a corpus file and build the TradeOutcome list in one call."""
     return build_trade_outcomes(
@@ -842,4 +892,5 @@ def build_from_corpus(
         baseline_params=baseline_params,
         risk_config=risk_config,
         cost_stack=cost_stack,
+        exit_model=exit_model,
     )

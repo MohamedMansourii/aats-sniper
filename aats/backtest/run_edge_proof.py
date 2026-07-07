@@ -58,6 +58,10 @@ from aats.backtest.outcome_harness import (
     RpcBlockTimeResolver,
     build_from_corpus,
 )
+from aats.backtest.realizable_exit import (
+    EXIT_MODEL_REALIZABLE,
+    EXIT_MODELS,
+)
 from aats.models.gate_a import compute_gate_a
 from aats.models.gate_b import TradeOutcome, UnitOfRisk, compute_gate_b_delta
 
@@ -123,6 +127,7 @@ def run_edge_proof(
     out_path: str | Path | None = None,
     strategy: str = STRATEGY_LAUNCH,
     entry_horizon_s: int = DEFAULT_ENTRY_HORIZON_S,
+    exit_model: str = EXIT_MODEL_REALIZABLE,
 ) -> tuple[int, dict]:
     """Build the TradeOutcome set and compute the GATE-A / GATE-B verdict.
 
@@ -134,7 +139,14 @@ def run_edge_proof(
       * `momentum` — decide at `entry_horizon_s` seconds from the early trajectory
                      (`build_momentum_from_corpus`). Both emit the SAME TradeOutcome schema,
                      so GATE-A / GATE-B are computed identically.
+
+    `exit_model` selects the OUTCOME fidelity (DEFAULT `'realizable'`): `'realizable'` haircuts
+    the exit fill for liquidity impact + honeypot/unsellable marks (a TRUSTWORTHY, conservative
+    verdict — realizable net PnL is always <= spot); `'spot'` keeps the optimistic spot fill
+    (parity/regression only). It NEVER changes the selection or the point-in-time leak boundary.
     """
+    if exit_model not in EXIT_MODELS:
+        raise ValueError(f"unknown exit_model {exit_model!r} (expected one of {EXIT_MODELS})")
     # `stats` is one of two concrete stat types depending on the branch — annotate the union so
     # mypy accepts both assignments (runtime already safe; the scoreboard reads only common /
     # getattr-guarded fields).
@@ -144,10 +156,11 @@ def run_edge_proof(
             corpus_path,
             block_time_resolver=block_time_resolver,
             entry_horizon_s=entry_horizon_s,
+            exit_model=exit_model,
         )
     elif strategy == STRATEGY_LAUNCH:
         outcomes, stats = build_from_corpus(
-            corpus_path, block_time_resolver=block_time_resolver
+            corpus_path, block_time_resolver=block_time_resolver, exit_model=exit_model
         )
     else:
         raise ValueError(
@@ -157,6 +170,7 @@ def run_edge_proof(
     scoreboard: dict = {
         "corpus_path": str(corpus_path),
         "strategy": strategy,
+        "exit_model": exit_model,
         "n_records": stats.n_records,
         "n_resolved": stats.n_resolved,
         "n_censored": stats.n_censored,
@@ -212,6 +226,10 @@ def run_edge_proof(
 def _print_scoreboard(scoreboard: dict) -> None:
     print("\n=== AATS EDGE PROOF (GATE-A / GATE-B) ===")
     print(f"  corpus            : {scoreboard.get('corpus_path')}")
+    print(
+        f"  exit_model        : {scoreboard.get('exit_model')} "
+        "(realizable = liquidity-impact + honeypot haircut; spot = optimistic)"
+    )
     strategy = scoreboard.get("strategy", STRATEGY_LAUNCH)
     if strategy == STRATEGY_MOMENTUM:
         print(
@@ -286,6 +304,18 @@ def main(argv: list[str] | None = None) -> int:
         "Only used when --strategy momentum.",
     )
     parser.add_argument(
+        "--exit-model",
+        default=EXIT_MODEL_REALIZABLE,
+        choices=EXIT_MODELS,
+        help=(
+            f"Exit fidelity (default: {EXIT_MODEL_REALIZABLE!r}). {EXIT_MODEL_REALIZABLE!r} haircuts"
+            " the exit fill for liquidity impact + honeypot/unsellable marks (a TRUSTWORTHY, "
+            "conservative verdict: realizable net PnL is always <= spot). 'spot' keeps the "
+            "optimistic spot fill (parity/regression only). Never changes the selection or the "
+            "leak boundary."
+        ),
+    )
+    parser.add_argument(
         "--blocktime-cache",
         default=default_cache_path(),
         help="Persistent signature->block_time cache path (default: env BLOCKTIME_CACHE_PATH or "
@@ -316,6 +346,7 @@ def main(argv: list[str] | None = None) -> int:
         out_path=args.out,
         strategy=args.strategy,
         entry_horizon_s=args.entry_horizon,
+        exit_model=args.exit_model,
     )
     _print_scoreboard(scoreboard)
     return exit_code
