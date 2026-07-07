@@ -35,27 +35,30 @@ from aats.execution.exceptions import (
     VenueError,
 )
 from aats.execution.jito_jupiter_venue import JitoJupiterVenue
+from aats.execution.multi_wallet import (
+    N_WALLETS_MAX_DEFAULT,
+    N_WALLETS_MAX_HARD_CEILING,
+    AntiClusterCapExceeded,
+    BundleFillResult,
+    MintExposureLedger,
+    MultiWalletConfigError,
+    MultiWalletOrchestrator,
+    PartialFillReconciler,
+    PartialFillSummary,
+    WalletSlotFill,
+    make_single_wallet_orchestrator,
+)
 from aats.execution.rpc_client import (
     ConfirmResult,
     DevnetRpcClient,
     MockDevnetRpcClient,
     MockRpcClient,
     MockRpcClientBlockhashExpiry,
+    MockRpcClientPhantomLand,
     MockRpcClientRevert,
+    SignatureStatus,
     SolanaRpcClient,
-)
-from aats.execution.multi_wallet import (
-    AntiClusterCapExceeded,
-    BundleFillResult,
-    MintExposureLedger,
-    MultiWalletConfigError,
-    MultiWalletOrchestrator,
-    N_WALLETS_MAX_DEFAULT,
-    N_WALLETS_MAX_HARD_CEILING,
-    PartialFillReconciler,
-    PartialFillSummary,
-    WalletSlotFill,
-    make_single_wallet_orchestrator,
+    extract_signature_b58,
 )
 from aats.execution.sell_sim import (
     MockHoneypotRpcClient,
@@ -70,6 +73,14 @@ from aats.execution.signer_client import (
     MockSignerClient,
     MockSignerClientRefusing,
     SocketSignerClient,
+)
+from aats.execution.signer_enforcer import (
+    Enforcer,
+    SignerPolicy,
+    SpendDecoder,
+    VelocityLedger,
+    derive_ata,
+    load_signer_policy,
 )
 
 __all__ = [
@@ -89,14 +100,24 @@ __all__ = [
     "MockRpcClient",
     "MockRpcClientRevert",
     "MockRpcClientBlockhashExpiry",
+    "MockRpcClientPhantomLand",
     "MockDevnetRpcClient",
     "DevnetRpcClient",
     "ConfirmResult",
+    "SignatureStatus",
+    "extract_signature_b58",
     "SolanaRpcClient",
     # Signer clients (injectable)
     "MockSignerClient",
     "MockSignerClientRefusing",
     "SocketSignerClient",
+    # Signer enforcer (ADR-0015 — the un-bypassable signer-side policy)
+    "Enforcer",
+    "SignerPolicy",
+    "SpendDecoder",
+    "VelocityLedger",
+    "derive_ata",
+    "load_signer_policy",
     # Sell-sim (T-329)
     "SellSimVenue",
     "SellSimResult",

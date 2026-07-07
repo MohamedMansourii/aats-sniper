@@ -21,6 +21,7 @@ All money in simulate results is integer lamports / CU counts (int), never float
 """
 from __future__ import annotations
 
+import base64
 import logging
 import os
 from decimal import Decimal
@@ -105,6 +106,104 @@ class QuoteResult:
         return Decimal(self.price_impact_pct)
 
 
+class SignatureStatus:
+    """Result of a single signature's getSignatureStatuses lookup.
+
+    found:     True if the RPC has ever seen this signature (processed/confirmed/
+               finalized OR failed on-chain). False means "unknown to this node" --
+               NOT proof the tx never landed (it may still be in flight), but the
+               retry/phantom-land recheck (jito_jupiter_venue.py) treats an unfound
+               signature as safe to retry.
+    confirmed: True if confirmationStatus is "confirmed" or "finalized" AND err is None.
+    slot:      the slot the tx landed in, or None.
+    err:       the on-chain error object (None on success), or None if not found.
+    """
+
+    __slots__ = ("signature", "found", "confirmed", "slot", "err")
+
+    def __init__(
+        self,
+        *,
+        signature: str,
+        found: bool,
+        confirmed: bool,
+        slot: int | None = None,
+        err: Any = None,
+    ) -> None:
+        self.signature = signature
+        self.found = found
+        self.confirmed = confirmed
+        self.slot = slot
+        self.err = err
+
+
+def extract_signature_b58(serialized_b64: str) -> str:
+    """Best-effort LOCAL extraction of a signed tx's own (first) signature.
+
+    A signed Solana transaction's first signature is fully determined by its
+    own bytes -- no RPC round-trip is needed to know what signature a landed
+    tx WOULD have. This lets the retry/resend path check "did the ORIGINAL
+    attempt actually land?" via getSignatureStatuses even when send_transaction()
+    itself failed/timed out client-side (so no signature ever came back in the
+    RPC response) -- see jito_jupiter_venue.py's phantom-land recheck.
+
+    When `solders` is available, decodes the real VersionedTransaction and
+    returns the base58-encoded first signature. When solders is absent (as in
+    this offline dev/test environment -- see tx_builder.py `_HAS_SOLDERS`),
+    falls back to a deterministic (non-cryptographic) surrogate derived from a
+    hash of the serialized bytes: STABLE for byte-identical resends, DIFFERENT
+    after a fresh-blockhash rebuild. This surrogate is sufficient to dedupe
+    "did I already send exactly this content" in an offline/test context; it
+    is NOT a real Solana signature and MUST NOT be treated as one elsewhere.
+    """
+    try:
+        import solders  # noqa: F401
+        from solders.transaction import VersionedTransaction  # type: ignore
+
+        raw = base64.b64decode(serialized_b64)
+        tx = VersionedTransaction.from_bytes(raw)
+        if tx.signatures:
+            return str(tx.signatures[0])
+    except Exception:
+        pass
+    import hashlib
+
+    digest = hashlib.sha256(serialized_b64.encode()).hexdigest()
+    return f"local-sig-{digest[:44]}"
+
+
+def _get_signature_statuses_via_rpc(
+    rpc_call: Any, signatures: list[str]
+) -> list[SignatureStatus | None]:
+    """Shared getSignatureStatuses implementation for SolanaRpcClient / DevnetRpcClient.
+
+    `rpc_call` is each client's own `_rpc(method, params)` bound method.
+    """
+    if not signatures:
+        return []
+    result = rpc_call("getSignatureStatuses", [signatures, {"searchTransactionHistory": True}])
+    values = result.get("value", []) if result else []
+    out: list[SignatureStatus | None] = []
+    for i, sig in enumerate(signatures):
+        val = values[i] if i < len(values) else None
+        if val is None:
+            out.append(None)
+            continue
+        confirmation_status = val.get("confirmationStatus")
+        confirmed = confirmation_status in ("confirmed", "finalized") and val.get("err") is None
+        slot = val.get("slot")
+        out.append(
+            SignatureStatus(
+                signature=sig,
+                found=True,
+                confirmed=confirmed,
+                slot=int(slot) if slot is not None else None,
+                err=val.get("err"),
+            )
+        )
+    return out
+
+
 class LandAttemptResult:
     """Result of submitting a transaction to the block engine.
 
@@ -158,6 +257,17 @@ class RpcClientProtocol(Protocol):
         """Return account info dict or None if account does not exist."""
         ...
 
+    def get_signature_statuses(self, signatures: list[str]) -> list[SignatureStatus | None]:
+        """Poll getSignatureStatuses for the given signatures (batch, order-preserving).
+
+        One entry per input signature; None = the RPC has never seen this
+        signature. Used to RE-CHECK the ORIGINAL signature's on-chain status
+        before any resend, so a transient client-side send failure never
+        causes a double-land of a tx that actually landed (the "phantom
+        landed" guard — jito_jupiter_venue.py `_recheck_signature_before_resend`).
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Mock RPC client — deterministic, no network, for offline tests
@@ -185,12 +295,41 @@ class MockRpcClient:
         # Track how many times simulate/send were called (for test assertions).
         self.simulate_calls: int = 0
         self.send_calls: int = 0
+        self.signature_status_calls: int = 0
+        # signature -> land_slot, populated by mark_signature_landed() (test-only
+        # helper) to simulate "this signature actually landed on-chain".
+        self._landed_signatures: dict[str, int] = {}
 
     def get_latest_blockhash(self) -> str:
         return self._blockhash
 
     def get_current_slot(self) -> int:
         return self._slot
+
+    def mark_signature_landed(self, signature: str, *, slot: int | None = None) -> None:
+        """TEST-ONLY: simulate that `signature` actually landed on-chain, so a
+        subsequent get_signature_statuses([signature]) call reports it confirmed.
+        Used to construct "phantom landed" scenarios (a client-perceived send
+        failure whose tx actually landed anyway)."""
+        self._landed_signatures[signature] = slot if slot is not None else self._slot
+
+    def get_signature_statuses(self, signatures: list[str]) -> list[SignatureStatus | None]:
+        self.signature_status_calls += 1
+        out: list[SignatureStatus | None] = []
+        for sig in signatures:
+            if sig in self._landed_signatures:
+                out.append(
+                    SignatureStatus(
+                        signature=sig,
+                        found=True,
+                        confirmed=True,
+                        slot=self._landed_signatures[sig],
+                        err=None,
+                    )
+                )
+            else:
+                out.append(None)
+        return out
 
     def simulate_transaction(self, signed_tx_b64: str) -> SimulateResult:
         self.simulate_calls += 1
@@ -296,6 +435,38 @@ class MockRpcClientBlockhashExpiry(MockRpcClient):
         )
 
 
+class MockRpcClientPhantomLand(MockRpcClient):
+    """Mock RPC that reports a client-side send FAILURE whose tx ACTUALLY landed anyway.
+
+    Models the real-world "phantom landed" hazard: sendTransaction times out /
+    errors on the client side, but the cluster processed the tx regardless.
+    Proves the retry loop's getSignatureStatuses recheck (`extract_signature_b58`
+    + `get_signature_statuses`) catches this BEFORE blindly rebuilding-and-resending
+    with a fresh blockhash (which would risk landing BOTH the original and the
+    retry — a double-land). A correct caller must see send_calls == 1: the
+    recheck must short-circuit the retry, not merely detect the phantom land
+    after also resending.
+    """
+
+    def __init__(self, *, land_slot: int | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._phantom_land_slot = land_slot if land_slot is not None else self._slot + 1
+
+    def send_transaction(self, signed_tx_b64: str) -> LandAttemptResult:
+        self.send_calls += 1
+        # Simulate the cluster actually processing this exact tx despite the
+        # client reporting a transient failure below: register its local
+        # signature as landed BEFORE returning the (client-perceived) failure.
+        local_sig = extract_signature_b58(signed_tx_b64)
+        self.mark_signature_landed(local_sig, slot=self._phantom_land_slot)
+        return LandAttemptResult(
+            submitted=False,
+            signature=None,
+            land_slot=None,
+            reason="node_lag",
+        )
+
+
 # ---------------------------------------------------------------------------
 # MockDevnetRpcClient — offline mock of the devnet submit→confirm→reconcile path
 # ---------------------------------------------------------------------------
@@ -378,7 +549,7 @@ class MockDevnetRpcClient(MockRpcClient):
         *,
         max_polls: int = 30,
         poll_interval_s: float = 0.5,
-    ) -> "ConfirmResult":
+    ) -> ConfirmResult:
         """Poll for confirmation.  Returns ConfirmResult after confirm_after_polls polls.
 
         In production this maps to repeated getSignatureStatuses calls until
@@ -571,7 +742,7 @@ class DevnetRpcClient:
         commitment: str = "confirmed",
         max_polls: int = 30,
         poll_interval_s: float = 0.5,
-    ) -> "ConfirmResult":
+    ) -> ConfirmResult:
         """Poll getSignatureStatuses until confirmed or max_polls exhausted.
 
         In production E1 validation, this drives the confirm loop.  The mock
@@ -604,6 +775,10 @@ class DevnetRpcClient:
         if result is None or result.get("value") is None:
             return None
         return dict(result["value"])
+
+    def get_signature_statuses(self, signatures: list[str]) -> list[SignatureStatus | None]:
+        """Batch getSignatureStatuses -- the phantom-land / original-signature recheck primitive."""
+        return _get_signature_statuses_via_rpc(self._rpc, signatures)
 
 
 # ---------------------------------------------------------------------------
@@ -718,3 +893,8 @@ class SolanaRpcClient:
         if result is None or result.get("value") is None:
             return None
         return dict(result["value"])
+
+    def get_signature_statuses(self, signatures: list[str]) -> list[SignatureStatus | None]:
+        """Batch getSignatureStatuses -- the phantom-land / original-signature recheck primitive
+        used by jito_jupiter_venue.py before any blockhash-expiry retry resend."""
+        return _get_signature_statuses_via_rpc(self._rpc, signatures)

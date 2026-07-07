@@ -540,6 +540,7 @@ def build_exit_tx(
             cu_price_microlamports=cu_price_microlamports,
             cu_limit=cu_limit,
             pool_program_name="jupiter_aggregator_v6",
+            blockhash=blockhash,  # embedded so a fresh-blockhash retry rebuild differs (B3 parity)
             extra={"jupiter_swap_b64": jupiter_swap_b64[:32] + "...(truncated)"},
         )
     else:
@@ -552,6 +553,7 @@ def build_exit_tx(
             cu_price_microlamports=cu_price_microlamports,
             cu_limit=cu_limit,
             pool_program_name="jupiter_aggregator_v6",
+            blockhash=blockhash,  # embedded so a fresh-blockhash retry rebuild differs (B3 parity)
         )
 
     return UnsignedTx(

@@ -793,6 +793,59 @@ class TestConfigGuards:
                 n_max=2,  # must override to allow 2 wallets in this test
             )
 
+    def test_signer_wallet_id_mismatch_rejected_at_construction(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fix round 2 MINOR finding: if SIGNER_WALLET_ID is set and does not match
+        any of this orchestrator's wallet_ids, fail loud HERE (at boot) rather than
+        discovering it only when every sign() request refuses
+        (signer_wallet_id_mismatch)."""
+        monkeypatch.setenv("SIGNER_WALLET_ID", "wallet-9")
+        with pytest.raises(MultiWalletConfigError, match="SIGNER_WALLET_ID"):
+            MultiWalletOrchestrator(
+                venue=make_sim_venue(),
+                wallet_ids=["wallet-0"],
+                ledger=make_ledger(),
+                n_max=1,
+            )
+
+    def test_signer_wallet_id_matching_one_slot_is_accepted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SIGNER_WALLET_ID", "wallet-0")
+        orch = MultiWalletOrchestrator(
+            venue=make_sim_venue(),
+            wallet_ids=["wallet-0"],
+            ledger=make_ledger(),
+            n_max=1,
+        )
+        assert orch.n_wallets == 1
+
+    def test_signer_wallet_id_unset_skips_the_check(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Backward-compatible: existing callers/tests that never set SIGNER_WALLET_ID
+        are unaffected (no new failure mode introduced for them)."""
+        monkeypatch.delenv("SIGNER_WALLET_ID", raising=False)
+        orch = MultiWalletOrchestrator(
+            venue=make_sim_venue(),
+            wallet_ids=["wallet-0"],
+            ledger=make_ledger(),
+            n_max=1,
+        )
+        assert orch.n_wallets == 1
+
+    def test_signer_wallet_id_matching_any_multi_wallet_slot_is_accepted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("N_WALLETS_MAX_ENABLED", "true")
+        monkeypatch.setenv("SIGNER_WALLET_ID", "wallet-1")
+        orch = MultiWalletOrchestrator(
+            venue=make_sim_venue(),
+            wallet_ids=["wallet-0", "wallet-1"],
+            ledger=make_ledger(),
+            n_max=2,
+        )
+        assert orch.n_wallets == 2
+
     def test_n_max_hard_ceiling_enforced(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """N_max > N_WALLETS_MAX_HARD_CEILING is refused even with activation gate open."""
         monkeypatch.setenv("N_WALLETS_MAX_ENABLED", "true")

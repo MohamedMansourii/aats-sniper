@@ -77,6 +77,56 @@ class TestJitoJupiterVenueABCCompliance:
 
 
 # ===========================================================================
+# 1b. RED-1: misconfigured construction FAILS LOUD — no silent mock default
+# ===========================================================================
+
+class TestNoSilentMockDefault:
+    """A misconfigured deployment that forgets to inject rpc_client/signer_client
+    must FAIL LOUD at construction, never silently run against a mock (RED-1)."""
+
+    def test_missing_rpc_client_raises(self) -> None:
+        from aats.execution.exceptions import VenueError
+
+        with pytest.raises(VenueError) as exc_info:
+            JitoJupiterVenue(
+                wallet_pubkey=_MOCK_PUBKEY,
+                rpc_client=None,
+                signer_client=MockSignerClient(),
+            )
+        assert exc_info.value.reason == "venue_misconfigured_no_client_injected"
+        assert "rpc_client" in exc_info.value.message
+
+    def test_missing_signer_client_raises(self) -> None:
+        from aats.execution.exceptions import VenueError
+
+        with pytest.raises(VenueError) as exc_info:
+            JitoJupiterVenue(
+                wallet_pubkey=_MOCK_PUBKEY,
+                rpc_client=MockRpcClient(),
+                signer_client=None,
+            )
+        assert exc_info.value.reason == "venue_misconfigured_no_client_injected"
+        assert "signer_client" in exc_info.value.message
+
+    def test_missing_both_raises_and_names_both(self) -> None:
+        from aats.execution.exceptions import VenueError
+
+        with pytest.raises(VenueError) as exc_info:
+            JitoJupiterVenue(wallet_pubkey=_MOCK_PUBKEY, rpc_client=None, signer_client=None)
+        assert "rpc_client" in exc_info.value.message
+        assert "signer_client" in exc_info.value.message
+
+    def test_explicit_injection_still_works(self) -> None:
+        """Explicit injection (the only supported path now) is unaffected."""
+        venue = JitoJupiterVenue(
+            wallet_pubkey=_MOCK_PUBKEY,
+            rpc_client=MockRpcClient(),
+            signer_client=MockSignerClient(),
+        )
+        assert isinstance(venue, JitoJupiterVenue)
+
+
+# ===========================================================================
 # 2. DRY-RUN: execute() builds + signs + simulates — NEVER sends
 # ===========================================================================
 
@@ -521,6 +571,79 @@ class TestRetryAndIdempotency:
             f"Expected no new send_transaction on duplicate intent_id, "
             f"but got {send_count_after_second - send_count_after_first} additional calls."
         )
+
+
+# ===========================================================================
+# 6b. Phantom-land guard: getSignatureStatuses recheck before ANY resend
+# ===========================================================================
+
+class TestPhantomLandGuard:
+    """A client-perceived transient send failure does not prove the tx never reached
+    the cluster. Before rebuilding+resending, the retry loop MUST re-check the
+    ORIGINAL attempt's own signature via getSignatureStatuses. If it actually landed,
+    the loop must return that as the fill and NOT resend (which would risk a double-land).
+    """
+
+    def test_entry_recheck_short_circuits_the_retry(self, live_env: None) -> None:
+        from aats.execution.rpc_client import MockRpcClientPhantomLand
+
+        phantom_rpc = MockRpcClientPhantomLand(current_slot=_SLOT, cu_consumed=180_000)
+        venue = JitoJupiterVenue(
+            wallet_pubkey=_MOCK_PUBKEY,
+            rpc_client=phantom_rpc,
+            signer_client=MockSignerClient(),
+            live_submit_enabled=True,
+        )
+        intent = make_entry_intent(intent_id="ci-phantom-land-entry")
+        result = venue.execute(intent, make_launch_event())
+
+        # The recheck must catch the phantom land BEFORE any rebuild+resend —
+        # exactly ONE send_transaction call, never two.
+        assert phantom_rpc.send_calls == 1, (
+            f"Expected exactly 1 send_transaction call (recheck must short-circuit the "
+            f"retry, not merely detect the phantom land after ALSO resending); "
+            f"got {phantom_rpc.send_calls}."
+        )
+        assert phantom_rpc.signature_status_calls >= 1, (
+            "Expected the recheck to call get_signature_statuses before any resend."
+        )
+        assert result.landed is True, "The phantom-landed original must be reconciled as filled."
+
+    def test_exit_recheck_short_circuits_the_retry(self, live_env: None) -> None:
+        from aats.execution.rpc_client import MockRpcClientPhantomLand
+
+        phantom_rpc = MockRpcClientPhantomLand(current_slot=_SLOT, cu_consumed=180_000)
+        venue = JitoJupiterVenue(
+            wallet_pubkey=_MOCK_PUBKEY,
+            rpc_client=phantom_rpc,
+            signer_client=MockSignerClient(),
+            live_submit_enabled=True,
+        )
+        exit_intent = make_exit_intent(intent_id="ci-phantom-land-exit")
+        result = venue.exit(exit_intent, object())
+
+        assert phantom_rpc.send_calls == 1, (
+            f"Expected exactly 1 send_transaction call on the exit path too; "
+            f"got {phantom_rpc.send_calls}."
+        )
+        assert result.landed is True
+
+    def test_genuine_failure_still_retries_normally(self, live_env: None) -> None:
+        """Sanity check: the phantom-land recheck must NOT interfere with the existing,
+        already-proven blockhash-expiry retry when the original attempt genuinely did
+        not land (get_signature_statuses correctly reports "not found")."""
+        expiry_rpc = MockRpcClientBlockhashExpiry(current_slot=_SLOT, cu_consumed=180_000)
+        venue = JitoJupiterVenue(
+            wallet_pubkey=_MOCK_PUBKEY,
+            rpc_client=expiry_rpc,
+            signer_client=MockSignerClient(),
+            live_submit_enabled=True,
+        )
+        intent = make_entry_intent(intent_id="ci-genuine-retry-with-recheck")
+        result = venue.execute(intent, make_launch_event())
+
+        assert expiry_rpc.send_calls == 2, "The recheck must not block a genuine retry."
+        assert result.landed is True
 
 
 # ===========================================================================

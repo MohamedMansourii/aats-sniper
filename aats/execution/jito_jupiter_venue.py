@@ -13,6 +13,12 @@ Architecture:
   - Resilient submit: retry on blockhash expiry fetches a FRESH blockhash, rebuilds the tx
     from scratch, re-signs, and re-simulates before each retry — the retry loop never re-sends
     byte-identical stale bytes (execution-venue.md Standards §6 "fresh blockhash each attempt").
+    Applies to BOTH the entry retry loop and the exit retry loop.
+  - Phantom-land guard: BEFORE any retry resend, the ORIGINAL (just-failed) attempt's own
+    signature is re-checked via getSignatureStatuses (rpc_client.get_signature_statuses).
+    A client-perceived transient failure (blockhash expiry / node lag) does NOT prove the tx
+    never reached the cluster — if the recheck shows it actually landed, the retry loop returns
+    that as the fill and NEVER resends (which would risk landing the tx twice).
   - Idempotent: duplicate sends under the same client_intent_id do NOT double-land.
 
 DRY-RUN HARD RULE (FR-039, AC-060, execution-venue.md §4):
@@ -38,8 +44,13 @@ SIGN() PROCESS BOUNDARY (ADR-0009):
   - The hot core holds ONLY the PUBKEY (WALLET_PUBKEY env var).
   - The signer may refuse (SignerRefused); a refusal aborts the snipe/exit, never leaks.
 
-INJECTABLE: RPC client and signer client are injected at construction.
-MockRpcClient + MockSignerClient + MockDevnetRpcClient allow full offline testing.
+INJECTABLE: RPC client and signer client are REQUIRED at construction — there is
+NO silent default to a mock (RED-1). A misconfigured deployment that forgets to
+wire rpc_client / signer_client FAILS LOUD at __init__ (raises VenueError) instead
+of silently running against MockRpcClient/MockSignerClient — the single most
+dangerous "LIVE mode that isn't actually live" failure mode. Tests explicitly
+inject MockRpcClient / MockSignerClient / MockDevnetRpcClient for full offline
+coverage; production wires SolanaRpcClient / DevnetRpcClient / SocketSignerClient.
 
 Money: all amounts are int (lamports / base units) or Decimal-as-string. No float.
 """
@@ -69,15 +80,16 @@ from aats.execution.exceptions import (
     QuoteStalenessError,
     SignerRefused,
     SimulationReverted,
+    VenueError,
 )
 from aats.execution.rpc_client import (
     ConfirmResult,
-    MockDevnetRpcClient,
-    MockRpcClient,
     RpcClientProtocol,
+    SignatureStatus,
     SimulateResult,
+    extract_signature_b58,
 )
-from aats.execution.signer_client import MockSignerClient, SignerClientProtocol
+from aats.execution.signer_client import SignerClientProtocol
 from aats.execution.tx_builder import build_entry_tx, build_exit_tx, size_cu_limit
 
 logger = logging.getLogger(__name__)
@@ -129,7 +141,8 @@ class JitoJupiterVenue(ExecutionVenue):
     """Real production venue implementing the ExecutionVenue ABC.
 
     Usage:
-        # DRY_RUN (default — safe for testing):
+        # DRY_RUN (default — safe for testing). rpc_client / signer_client are
+        # REQUIRED — there is no silent mock default (RED-1); inject explicitly:
         venue = JitoJupiterVenue(
             wallet_pubkey="<pubkey>",
             rpc_client=MockRpcClient(),
@@ -152,8 +165,8 @@ class JitoJupiterVenue(ExecutionVenue):
         self,
         *,
         wallet_pubkey: str,
-        rpc_client: RpcClientProtocol | None = None,
-        signer_client: SignerClientProtocol | None = None,
+        rpc_client: RpcClientProtocol | None,
+        signer_client: SignerClientProtocol | None,
         live_submit_enabled: bool = False,
         jupiter_api_url: str | None = None,
         cluster: str | None = None,
@@ -162,10 +175,14 @@ class JitoJupiterVenue(ExecutionVenue):
 
         Args:
             wallet_pubkey:       The PUBKEY of the trade-only wallet. NOT the key.
-            rpc_client:          Injectable RPC client. Defaults to MockRpcClient (offline safe).
-                                 For devnet mode, inject a MockDevnetRpcClient (offline) or
-                                 DevnetRpcClient(rpc_url=RPC_DEVNET) (live devnet).
-            signer_client:       Injectable signer client. Defaults to MockSignerClient.
+            rpc_client:          Injectable RPC client. REQUIRED — no silent mock default
+                                 (RED-1: a misconfigured LIVE run must FAIL LOUD, never
+                                 silently run against a mock). Tests inject MockRpcClient
+                                 explicitly; production injects SolanaRpcClient /
+                                 DevnetRpcClient(rpc_url=RPC_DEVNET).
+            signer_client:       Injectable signer client. REQUIRED — same rationale.
+                                 Tests inject MockSignerClient; production injects
+                                 SocketSignerClient (crosses to aats-signer, ADR-0009).
             live_submit_enabled: MUST be False unless DRY_RUN_ENABLED=false + CEO auth.
                                  This is the THIRD independent DRY-RUN gate
                                  (execution-venue.md §4).  NOT checked for devnet mode.
@@ -174,10 +191,32 @@ class JitoJupiterVenue(ExecutionVenue):
                                  "devnet" → DEVNET submit mode (E1 validation).
                                  "mainnet" or None → normal DRY_RUN / LIVE path.
                                  The env var SOLANA_CLUSTER is read if cluster=None.
+
+        Raises:
+            VenueError(reason="venue_misconfigured_no_client_injected"): rpc_client or
+            signer_client is None. FAILS LOUD at construction — the caller must inject
+            MockRpcClient()/MockSignerClient() explicitly for offline/DRY_RUN use, or a
+            real client for LIVE/DEVNET. There is no implicit fallback (RED-1).
         """
+        if rpc_client is None or signer_client is None:
+            missing = [
+                name
+                for name, val in (("rpc_client", rpc_client), ("signer_client", signer_client))
+                if val is None
+            ]
+            raise VenueError(
+                reason="venue_misconfigured_no_client_injected",
+                message=(
+                    f"JitoJupiterVenue requires {', '.join(missing)} to be explicitly "
+                    "injected — there is NO silent default to a mock (RED-1). A "
+                    "misconfigured LIVE run must fail loud, never silently run against "
+                    "MockRpcClient/MockSignerClient. For offline/DRY_RUN use, inject "
+                    "MockRpcClient()/MockSignerClient() explicitly."
+                ),
+            )
         self._wallet_pubkey = wallet_pubkey
-        self._rpc: RpcClientProtocol = rpc_client or MockRpcClient()
-        self._signer: SignerClientProtocol = signer_client or MockSignerClient()
+        self._rpc: RpcClientProtocol = rpc_client
+        self._signer: SignerClientProtocol = signer_client
         self._jupiter_url = jupiter_api_url or os.environ.get(
             "JUPITER_API_URL", "https://quote-api.jup.ag/v6"
         )
@@ -454,7 +493,14 @@ class JitoJupiterVenue(ExecutionVenue):
             cu_limit = size_cu_limit(sim.cu_consumed)
             priority_lamports = _compute_priority_lamports(cu_price_microlamports, cu_limit)
 
-            land = self.land(signed_tx, tip_lamports, cu_price_microlamports)
+            land = self._land_with_retry_exit(
+                signed_tx=signed_tx,
+                intent=intent,
+                wallet_id=_get_wallet_id_from_position(position),
+                tip_lamports=tip_lamports,
+                cu_price_microlamports=cu_price_microlamports,
+                cu_limit=cu_limit,
+            )
             _log_land(intent_id, land, tip_lamports, cu_price_microlamports)
 
             fill = self.reconcile(land)
@@ -898,6 +944,14 @@ class JitoJupiterVenue(ExecutionVenue):
                 if attempt <= _MAX_LAND_ATTEMPTS:
                     time.sleep(0.05 * (attempt - 1))  # brief back-off
 
+                # PHANTOM-LAND GUARD: re-check the ORIGINAL (just-failed) attempt's own
+                # signature before rebuilding+resending. A client-perceived transient
+                # failure does not prove the tx never reached the cluster; if it actually
+                # landed, resending would risk a double-land.
+                phantom = self._recheck_signature_before_resend(current_signed_tx)
+                if phantom is not None:
+                    return phantom
+
                 # Fetch a fresh blockhash — bytes will differ from the previous attempt.
                 fresh_blockhash = self._rpc.get_latest_blockhash()
                 rebuilt_unsigned = build_entry_tx(
@@ -974,6 +1028,171 @@ class JitoJupiterVenue(ExecutionVenue):
             signature=None,
             land_slot=None,
         )
+
+    def _land_with_retry_exit(
+        self,
+        *,
+        signed_tx: SignedTx,
+        intent: ExitIntent | ReduceIntent,
+        wallet_id: str,
+        tip_lamports: int,
+        cu_price_microlamports: int,
+        cu_limit: int,
+    ) -> LandResult:
+        """Submit the exit tx with retry on blockhash expiry (mirrors _land_with_retry_entry).
+
+        Exits get the SAME resilience guarantee as entries: fresh blockhash each retry,
+        re-sign, re-simulate before resubmission, and the phantom-land guard (a
+        getSignatureStatuses recheck of the ORIGINAL signature) before ANY resend, so a
+        transient client-side failure never causes a double-land of an exit that actually
+        landed. This is reached in LIVE and DEVNET modes; DRY_RUN short-circuits below.
+        """
+        mode = self.submit_mode
+
+        if mode == SubmitMode.DRY_RUN:
+            logger.info(
+                "jito_jupiter.land.dry_run",
+                extra={
+                    "intent_id": signed_tx.client_intent_id,
+                    "tip_lamports": tip_lamports,
+                    "cu_price": cu_price_microlamports,
+                    "reason": "dry_run — no network call (FR-039)",
+                },
+            )
+            return LandResult(submitted=False, reason="dry_run", signature=None, land_slot=None)
+
+        if mode == SubmitMode.DEVNET:
+            self._assert_devnet_allowed(signed_tx.client_intent_id)
+        else:
+            self._assert_live_allowed(signed_tx.client_intent_id)
+
+        current_signed_tx = signed_tx
+        last_reason = "unknown"
+
+        for attempt in range(1, _MAX_LAND_ATTEMPTS + 1):
+            if attempt > 1:
+                logger.warning(
+                    "jito_jupiter.land.transient_failure_retry",
+                    extra={
+                        "intent_id": signed_tx.client_intent_id,
+                        "attempt": attempt,
+                        "reason": last_reason,
+                    },
+                )
+                if attempt <= _MAX_LAND_ATTEMPTS:
+                    time.sleep(0.05 * (attempt - 1))
+
+                # PHANTOM-LAND GUARD — see _land_with_retry_entry for the rationale.
+                phantom = self._recheck_signature_before_resend(current_signed_tx)
+                if phantom is not None:
+                    return phantom
+
+                fresh_blockhash = self._rpc.get_latest_blockhash()
+                rebuilt_unsigned = build_exit_tx(
+                    intent=intent,
+                    jupiter_swap_b64="",
+                    wallet_pubkey=self._wallet_pubkey,
+                    blockhash=fresh_blockhash,
+                    cu_limit=cu_limit,
+                    tip_lamports=tip_lamports,
+                    cu_price_microlamports=cu_price_microlamports,
+                )
+                current_signed_tx = self.sign(rebuilt_unsigned, wallet_id)
+
+                retry_sim = self.simulate(current_signed_tx)
+                if not retry_sim.success:
+                    logger.warning(
+                        "jito_jupiter.land.retry_sim_revert",
+                        extra={
+                            "intent_id": signed_tx.client_intent_id,
+                            "attempt": attempt,
+                            "revert_reason": retry_sim.revert_reason,
+                        },
+                    )
+                    return LandResult(
+                        submitted=False,
+                        reason=f"sim_revert:{retry_sim.revert_reason or 'unknown'}",
+                        signature=None,
+                        land_slot=None,
+                    )
+
+            if mode == SubmitMode.DEVNET:
+                result = self._send_and_confirm_devnet(current_signed_tx, tip_lamports, cu_price_microlamports)
+            else:
+                result = self._send_once(current_signed_tx, tip_lamports, cu_price_microlamports)
+            logger.info(
+                "jito_jupiter.land.attempt",
+                extra={
+                    "intent_id": signed_tx.client_intent_id,
+                    "attempt": attempt,
+                    "submitted": result.submitted,
+                    "reason": result.reason,
+                    "signature": result.signature,
+                    "tip_lamports": tip_lamports,
+                    "cu_price": cu_price_microlamports,
+                    "cluster": self._cluster,
+                },
+            )
+
+            if result.submitted:
+                return result
+
+            last_reason = result.reason
+            if last_reason not in _BLOCKHASH_EXPIRY_RETRY_REASONS:
+                break
+
+        logger.error(
+            "jito_jupiter.land.failed_all_attempts",
+            extra={
+                "intent_id": signed_tx.client_intent_id,
+                "attempts": attempt,
+                "last_reason": last_reason,
+            },
+        )
+        return LandResult(submitted=False, reason=last_reason, signature=None, land_slot=None)
+
+    def _recheck_signature_before_resend(self, signed_tx: SignedTx) -> LandResult | None:
+        """PHANTOM-LAND GUARD: poll getSignatureStatuses for the ORIGINAL signed tx before
+        rebuilding+resending on a retry.
+
+        A transient send failure (blockhash expiry / node lag) reported by the client does
+        NOT guarantee the tx was never processed by the cluster. Blindly rebuilding with a
+        fresh blockhash and resending risks a DOUBLE LAND (both the original and the retry
+        confirm) if the original secretly landed. This re-checks the ORIGINAL signature's
+        on-chain status via `rpc_client.get_signature_statuses` (never depends on the failed
+        send's own response — the signature is derived LOCALLY from the signed tx bytes via
+        `extract_signature_b58`, which needs no network round-trip). If it landed, that is
+        returned as the fill and the caller MUST NOT resend. If the injected RPC client does
+        not implement get_signature_statuses (a minimal/legacy stand-in), the recheck is
+        skipped (best-effort) and the existing retry behaviour is unchanged.
+        """
+        get_statuses = getattr(self._rpc, "get_signature_statuses", None)
+        if get_statuses is None:
+            return None
+
+        local_sig = extract_signature_b58(signed_tx.serialized_b64)
+        statuses: list[SignatureStatus | None] = get_statuses([local_sig])
+        status = statuses[0] if statuses else None
+        if status is not None and status.confirmed and status.err is None:
+            logger.warning(
+                "jito_jupiter.land.phantom_landed_caught",
+                extra={
+                    "intent_id": signed_tx.client_intent_id,
+                    "signature": local_sig,
+                    "land_slot": status.slot,
+                    "note": (
+                        "original attempt landed despite a transient-failure reason -- "
+                        "NOT resending (would risk a double-land)."
+                    ),
+                },
+            )
+            return LandResult(
+                submitted=True,
+                reason="landed",
+                signature=local_sig,
+                land_slot=status.slot,
+            )
+        return None
 
     # -----------------------------------------------------------------------
     # ABC: reconcile()
@@ -1268,5 +1487,18 @@ def _get_default_cu_price() -> int:
 
 
 def _get_wallet_id_from_position(position: object) -> str:
-    """Extract the wallet_id from a position object (duck-typed)."""
+    """Extract the wallet_id from a position object (duck-typed).
+
+    Deploy invariant (fix round 2 MINOR finding): this default ("wallet-0") must match
+    aats-signer's SIGNER_WALLET_ID env var (signer_process.py, same default) — a
+    position built with a wallet_id the signer was NOT provisioned for refuses EVERY
+    sign() request (signer_wallet_id_mismatch, fail-closed but a total-stop footgun).
+    `aats.execution.multi_wallet.MultiWalletOrchestrator.__init__` cross-checks this
+    alignment at boot for entries (`_assert_signer_wallet_id_alignment`) whenever
+    SIGNER_WALLET_ID is set in the process environment; exits reached via this
+    duck-typed fallback are NOT independently cross-checked here (positions today are
+    always constructed via the orchestrator's single-wallet path, N=1 at R3/OQ-010) —
+    if a future exit path ever constructs a position with a wallet_id that bypasses
+    the orchestrator, re-validate against SIGNER_WALLET_ID at that call site too.
+    """
     return getattr(position, "wallet_id", "wallet-0")

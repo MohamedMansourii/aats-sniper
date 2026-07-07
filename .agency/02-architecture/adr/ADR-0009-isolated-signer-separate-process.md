@@ -4,6 +4,10 @@
 **Supersedes:** the G1-candidate custody topology (signer in `aats-hotcore`) recorded in
 BLUEPRINT §5.2 / infrastructure.md §5. Issued with a **delta notice** (BLUEPRINT §14) because the
 topology was declared "law."
+**Amended by:** ADR-0015 (2026-07-07) — resolves M3-audit RED-1 (the enforcer was absent; `rust/aats-signer`
+was a health-check-only scaffold). Topology below is unchanged; ADR-0015 fixes the go-live signer's
+**language = Python** (Rust deferred) and freezes the **byte-level enforcement contract** the three
+refusals below run on every sign request.
 
 ## Context
 The crypto-security red-team (blast-radius lens: "when the hot core is owned, how much can one

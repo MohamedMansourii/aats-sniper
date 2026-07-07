@@ -25,7 +25,7 @@
       "program_id": "ComputeBudget111111111111111111111111111111",
       "category": "core",
       "verify_at_build": true,
-      "rationale": "Sets CU limit + CU price (priority fee) on every snipe/exit tx. Moves no value. Carries no exfiltration path."
+      "rationale": "Sets CU limit + CU price (priority fee) on every snipe/exit tx. Carries no ATTACKER-CONTROLLED exfiltration path (the priority fee is burned to the block-producing validator, never sent to an arbitrary recipient), BUT SetComputeUnitPrice x SetComputeUnitLimit IS real wallet SOL outflow -- it is NOT free. The signer's C3 pricing (aats/execution/signer_enforcer.py `_parse_and_price`) independently decodes both ComputeBudget instructions and folds the resulting priority-fee lamports into spend(tx) so it is bounded by the same per-tx (0.1 SOL) / rolling-aggregate (0.5 SOL) caps as any other spend. (Corrected fix round 1 MAJOR finding: the prior 'moves no value' text was FALSE for SetComputeUnitPrice and left this outflow unpriced.)"
     },
     {
       "name": "spl_token_program",

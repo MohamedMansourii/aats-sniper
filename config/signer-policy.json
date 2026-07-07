@@ -1,0 +1,87 @@
+{
+  "$schema": "https://aats.local/schemas/signer-policy.v1.json",
+  "version": "1.0.0",
+  "owner": "solana-systems-architect (contract) / crypto-security-engineer (audit) / latency-devops-engineer (deploy hardening)",
+  "task": "ADR-0015 (RED-1 resolution) — companion to config/program-allowlist.json",
+  "authority": "ADR-0015 enforcement contract C3 (per-tx cap) + C4 (rolling-aggregate/velocity). Cap VALUES are duplicated from RiskConfig / OQ-005 DELIBERATELY (ADR-0009): the isolated signer must NOT import aats.contracts.risk, so a compromised caller cannot mutate the cap it is bound by.",
+  "description": "The go-live isolated PYTHON signer (aats-signer) LOADS this at boot, independently of the bot. It is the SOURCE OF POLICY for the per-tx SOL spend cap, the rolling-window aggregate + velocity cap, and the per-venue native-SOL spend-decoder table. The allowlist (C1) and tip/ATA pin (C2) live in config/program-allowlist.json; this file owns C3 + C4. The signer refuses (does not sign) on any breach.",
+  "HARD_RULES": {
+    "independent_of_riskconfig": "These caps DUPLICATE RiskConfig (per_trade_cap 0.1 SOL, max_aggregate 0.5 SOL). The signer reads THIS file, never aats.contracts.risk. Duplication is the point: the enforcer is a second, independent line the caller cannot edit.",
+    "tighten_only": "Caps may only be TIGHTENED (lowered) via a config-file + deploy change. NEVER widened at runtime, NEVER via any POST/API. Widening per_tx_cap_lamports > 100_000_000 or aggregate_cap_lamports > 500_000_000 is a floor violation (OQ-005) and MUST fail CI.",
+    "fail_closed_decoders": "Every venue_spend_decoders entry is VERIFY-AT-BUILD (discriminator + field layout transcribed from the venue IDL and CI-verified, exactly like program IDs). An unverifiable / missing decoder means that venue's buy instructions cannot be priced from bytes -> they are REFUSED (signer_spend_undecodable). A stale discriminator is fail-closed (refuse), never fail-open (sign).",
+    "no_decoder_literals_in_hot_path": "These discriminators/offsets are DATA loaded here, never literals in a hot-path decoder or snipe file (execution-venue.md §3.2 build guard). The signer reads them from this file.",
+    "program_ids_single_sourced": "This file carries NO base58 program-ID literals. venue_spend_decoders are keyed by the venue NAME from config/program-allowlist.json; the signer resolves name -> program_id via the allowlist (the ONE home for program IDs). This removes the ID-drift surface between the two config files.",
+    "velocity_is_burst_control": "window_seconds is a BURST window: no single burst may sign more than aggregate_cap_lamports or more than max_sign_count signatures. The DAILY 0.5 SOL tranche total is the circuit breaker's independent control (aats/risk/circuit_breaker.py), NOT the signer's."
+  },
+  "per_tx_cap": {
+    "authority": "ADR-0015 C3 / ADR-0009 refusal #1a / OQ-005",
+    "per_tx_cap_lamports": 100000000,
+    "note": "0.1 SOL. Wallet SOL outflow computed from tx bytes = Σ(System transfers sourced from wallet) + Σ(decoded venue native-SOL debit). Refuse if outflow > per_tx_cap_lamports (signer_per_tx_cap_exceeded).",
+    "floor_ceiling": "This is a CEILING. The live value must be <= 100000000; a larger value is an OQ-005 floor violation."
+  },
+  "rolling_aggregate_velocity": {
+    "authority": "ADR-0015 C4 / ADR-0009 refusal #1b / OQ-005",
+    "window_seconds": 60,
+    "aggregate_cap_lamports": 500000000,
+    "max_sign_count": 10,
+    "note": "Rolling burst window. Within any window_seconds: refuse if cumulative issued spend + this tx > aggregate_cap_lamports (signer_aggregate_cap_exceeded); refuse if issued-signature count + 1 > max_sign_count (signer_velocity_exceeded). Ledger is in-memory per signer process, monotonic-clock, pruned to window_seconds, NOT persisted across restart (fresh window on boot by design; per-tx + aggregate still bound single-window outflow).",
+    "floor_ceiling": "aggregate_cap_lamports is a CEILING <= 500000000 (OQ-005). window_seconds and max_sign_count are TIGHTEN-ONLY (shorter window / fewer signs only)."
+  },
+  "venue_spend_decoders": {
+    "authority": "ADR-0015 C3 fail-closed rule — every category=venue program in config/program-allowlist.json MUST have a VERIFY-AT-BUILD decoder here, or its buys are refused.",
+    "rule": "allowlist_name -> { discriminator (hex, first 8 bytes of the buy instruction data), sol_field (byte offset + length + endianness of the max-native-SOL-cost field, or null for pure wSOL-swap venues whose SOL is a counted System wrap transfer) }. `allowlist_name` matches config/program-allowlist.json `name`; the signer resolves it to a program_id via the allowlist (no base58 here). The signer returns the decoded native-SOL upper bound (0 when sol_field is null). Unknown discriminator at runtime -> signer_spend_undecodable.",
+    "VERIFY_AT_BUILD": "The discriminators + offsets below are PLACEHOLDERS to be transcribed from each venue's live IDL at build and CI-verified against a captured real buy tx (tests/ingestion/fixtures/real_tx). Until verified, treat as UNVERIFIED -> that venue's buys REFUSE (fail-closed). solana-execution-engineer fills these from the IDLs; crypto-security-engineer audits.",
+    "decoders": [
+      {
+        "allowlist_name": "pump_fun_bonding_curve",
+        "kind": "native_sol_buy",
+        "discriminator_hex": "VERIFY_AT_BUILD",
+        "sol_field": { "offset_bytes": "VERIFY_AT_BUILD", "length_bytes": 8, "endianness": "little", "field_name": "max_sol_cost" },
+        "status": "unverified",
+        "rationale": "pump.fun bonding-curve BUY pulls native SOL via CPI; the max the wallet can spend is the `max_sol_cost` arg in the instruction DATA (invisible as a top-level System transfer). This decoder bounds it. Until verified -> refuse."
+      },
+      {
+        "allowlist_name": "pumpswap_amm",
+        "kind": "wsol_swap",
+        "discriminator_hex": "VERIFY_AT_BUILD",
+        "sol_field": null,
+        "status": "unverified",
+        "rationale": "PumpSwap swaps from the wallet's wSOL ATA; the SOL entered via a wSOL-wrap System transfer already counted by C3. Decoded native-SOL debit = 0. Discriminator still VERIFY-AT-BUILD so the instruction is recognized (not refused as undecodable)."
+      },
+      {
+        "allowlist_name": "raydium_amm_v4",
+        "kind": "wsol_swap",
+        "discriminator_hex": "VERIFY_AT_BUILD",
+        "sol_field": null,
+        "status": "unverified",
+        "rationale": "Raydium v4 swaps from wSOL; native-SOL debit = 0 (wrap transfer counted by C3). VERIFY-AT-BUILD to recognize the buy discriminator."
+      },
+      {
+        "allowlist_name": "raydium_cpmm",
+        "kind": "wsol_swap",
+        "discriminator_hex": "VERIFY_AT_BUILD",
+        "sol_field": null,
+        "status": "unverified",
+        "rationale": "Raydium CPMM swaps from wSOL; native-SOL debit = 0 (wrap transfer counted by C3)."
+      },
+      {
+        "allowlist_name": "jupiter_aggregator_v6",
+        "kind": "wsol_swap",
+        "discriminator_hex": "VERIFY_AT_BUILD",
+        "sol_field": null,
+        "status": "unverified",
+        "rationale": "Exits/survivors only (not snipe buy, FR-028). Jupiter routes from wSOL; native-SOL debit = 0. Inner programs are still independently checked by C1 (every inner program_id must be allowlisted) and every System transfer by C2/C3, so a malicious route cannot exfiltrate."
+      }
+    ]
+  },
+  "build_time_verification": {
+    "ci_steps": [
+      "1. Assert per_tx_cap.per_tx_cap_lamports <= 100000000 and rolling_aggregate_velocity.aggregate_cap_lamports <= 500000000 (OQ-005 floors; fail the build on any widening).",
+      "2. Assert every config/program-allowlist.json entry with category=venue and status=active has a venue_spend_decoders entry whose allowlist_name matches (else that venue would refuse-all — surface it at build, not in prod). Assert every decoder allowlist_name resolves to a program in the allowlist.",
+      "3. For each decoder: assert discriminator_hex != 'VERIFY_AT_BUILD' and, for native_sol_buy, sol_field.offset_bytes is a resolved integer; else mark the venue UNVERIFIED (its buys refuse) and warn.",
+      "4. Assert this file contains NO base58 program-ID-shaped literal (program IDs live ONLY in config/program-allowlist.json; decoders are keyed by allowlist_name).",
+      "5. Assert the signer process does NOT import aats.contracts.risk at runtime (independent_of_riskconfig hard rule)."
+    ],
+    "fail_mode": "build_fails_closed"
+  }
+}

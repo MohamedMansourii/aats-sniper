@@ -137,7 +137,68 @@ _DEFAULT_SOCKET_PATH = "/run/aats/signer.sock"
 #   JSON response on refusal: {"error": str, "reason": str}
 _HEADER_FMT = "!I"  # 4-byte unsigned int, big-endian
 _HEADER_SIZE = struct.calcsize(_HEADER_FMT)
-_SOCKET_TIMEOUT_S = 0.003  # 3 ms — within the 1.5 ms p99 budget with headroom
+
+# Fix round 2 MAJOR finding: 3ms was budgeted for the DEFERRED Rust signer
+# (ADR-0009's 1.5ms p99 hop budget). ADR-0015 (the go-live Python signer) is explicit
+# that the Python signer adds "a few ms, not sub-ms" -- and this file shipped
+# unchanged, still hard-coded to the Rust-era 3ms, which the code review flagged as
+# an unreconciled cross-lane mismatch: every LIVE sign would fail closed
+# (signer_unavailable) against the ACTUAL Python signer's latency.
+#
+# Measured (this sandbox, `solders` NOT installed -- see signer_enforcer.py's
+# `_try_derive_ata`; pure-Python PDA-search fallback path, the WORST case) on a
+# realistic 17-key tx carrying an own-ATA transfer, order of magnitude across
+# repeated runs (exact numbers vary with host load -- see the live test output):
+#   first call on a cold Enforcer (no ATA-cache warmth yet): low tens of ms typical,
+#     occasional spikes to ~70ms.
+#   repeat calls with the SAME wallet/mint but a NEW blockhash (the blockhash-expiry
+#   retry pattern -- ADR-0015 memoizes per (wallet, mint), see signer_enforcer.py fix
+#   round 2 MAJOR finding note): sub-ms to a few ms typical, occasional double-digit-ms
+#     outlier (scheduler/GC jitter, not a systematic cost).
+# (see tests/execution/test_signer_client_timeout.py::test_measured_enforcer_latency_
+# is_recorded_for_the_timeout_default, which reproduces this benchmark on every run,
+# prints the CURRENT numbers, and asserts a generous regression bound). `solders` is a
+# PINNED production dependency (pyproject.toml) whose native PDA
+# search is expected to keep production latency in ADR-0015's stated "a few ms" range
+# even on a cold cache -- but `solders` is not installed in this offline dev sandbox
+# (ModuleNotFoundError), so that expectation is NOT independently verified here.
+#
+# The default below is deliberately conservative given that gap: generous headroom
+# over the WARM-cache pure-Python numbers above, but explicitly documented as NOT a
+# substitute for a real measurement against the deployed signer (solders installed,
+# real hardware). REQUIRED PRECONDITION before any devnet/LIVE wiring (T-327/T-352a):
+# measure the deployed signer's actual p99 sign latency and set SIGNER_CLIENT_TIMEOUT_S
+# from it (with headroom), not from this sandbox's number.
+_DEFAULT_SOCKET_TIMEOUT_S = 0.05  # 50 ms
+_SOCKET_TIMEOUT_ENV = "SIGNER_CLIENT_TIMEOUT_S"
+
+# Retained for backward compatibility with any code/tests referencing the old name;
+# now equal to the new documented default (see _DEFAULT_SOCKET_TIMEOUT_S above).
+_SOCKET_TIMEOUT_S = _DEFAULT_SOCKET_TIMEOUT_S
+
+
+def _resolve_default_timeout_s() -> float:
+    """Read SIGNER_CLIENT_TIMEOUT_S at call time (not at import time) so a deployment
+    can set it from its OWN measured signer p99 without a code change. Falls back to
+    the conservative default on any missing/malformed value."""
+    raw = os.environ.get(_SOCKET_TIMEOUT_ENV)
+    if raw is None:
+        return _DEFAULT_SOCKET_TIMEOUT_S
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "signer_client.invalid_timeout_env",
+            extra={"raw_value": raw, "falling_back_to": _DEFAULT_SOCKET_TIMEOUT_S},
+        )
+        return _DEFAULT_SOCKET_TIMEOUT_S
+    if value <= 0:
+        logger.warning(
+            "signer_client.non_positive_timeout_env",
+            extra={"raw_value": raw, "falling_back_to": _DEFAULT_SOCKET_TIMEOUT_S},
+        )
+        return _DEFAULT_SOCKET_TIMEOUT_S
+    return value
 
 
 class SocketSignerClient:
@@ -147,17 +208,21 @@ class SocketSignerClient:
     and is replaced by MockSignerClient in offline/test contexts.
 
     The socket path is read from SIGNER_SOCKET_PATH env var at construction time.
+    The socket timeout is read from SIGNER_CLIENT_TIMEOUT_S env var (or the
+    `timeout_s` constructor arg, which takes precedence) — see the module-level
+    "Fix round 2 MAJOR finding" note above for why this must be set from a REAL
+    measured signer p99 before any devnet/LIVE wiring.
     """
 
     def __init__(
         self,
         socket_path: str | None = None,
-        timeout_s: float = _SOCKET_TIMEOUT_S,
+        timeout_s: float | None = None,
     ) -> None:
         self._socket_path = socket_path or os.environ.get(
             _SOCKET_PATH_ENV, _DEFAULT_SOCKET_PATH
         )
-        self._timeout_s = timeout_s
+        self._timeout_s = timeout_s if timeout_s is not None else _resolve_default_timeout_s()
         # Cached pubkey — fetched on first sign() call or at construction if reachable.
         self._pubkey: str | None = None
 

@@ -64,6 +64,12 @@ _N_WALLETS_MAX_ENABLED_ENV = "N_WALLETS_MAX_ENABLED"
 _PER_TRADE_CAP_ENV = "PER_TRADE_CAP_LAMPORTS"
 _PER_TRADE_CAP_DEFAULT_LAMPORTS: int = 100_000_000  # 0.1 SOL
 
+# The signer process's OWN provisioned wallet id (aats/execution/signer_process.py
+# SIGNER_WALLET_ID env var, default "wallet-0") -- read here ONLY to cross-check
+# alignment at orchestrator construction time (fix round 2 MINOR finding), never as
+# a policy input. See _assert_signer_wallet_id_alignment below.
+_SIGNER_WALLET_ID_ENV = "SIGNER_WALLET_ID"
+
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -305,6 +311,11 @@ class MultiWalletOrchestrator:
                 "MultiWalletOrchestrator: wallet_ids must be unique — "
                 "duplicate wallet IDs are not allowed (blast-radius per-wallet)."
             )
+
+        # Fix round 2 MINOR finding: cross-check this orchestrator's wallet_ids against
+        # the signer process's OWN provisioned SIGNER_WALLET_ID (if the deploy set it) —
+        # BEFORE booting, not discovered later as "every single sign request refuses."
+        _assert_signer_wallet_id_alignment(wallet_ids)
 
         self._venue = venue
         self._wallet_ids = list(wallet_ids)
@@ -572,6 +583,38 @@ class PartialFillSummary:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _assert_signer_wallet_id_alignment(wallet_ids: list[str]) -> None:
+    """Cross-check the loop's wallet_ids against the signer process's OWN provisioned
+    SIGNER_WALLET_ID (fix round 2 MINOR finding).
+
+    Both sides read the SAME env-var-named invariant independently:
+      - aats/execution/signer_process.py's `serve_forever()` reads SIGNER_WALLET_ID
+        (default "wallet-0") as the ONE wallet id it will accept sign() requests for.
+      - This orchestrator's `wallet_ids` is what the loop actually emits.
+    Today (N=1, OQ-010) they are aligned by matching defaults ("wallet-0" both sides),
+    but nothing PROVED that alignment -- a deploy that renames one without the other
+    would have every sign() request refuse (signer_wallet_id_mismatch, fail-closed,
+    not dangerous, but a total-stop footgun discovered only at trade time). Fail loud
+    HERE, at orchestrator construction (boot), instead.
+
+    Only enforced when SIGNER_WALLET_ID is actually set in this process's environment
+    -- if unset, this process either isn't colocated with signer config (e.g. a unit
+    test) or genuinely doesn't know the signer's provisioning, and skipping the check
+    preserves existing behavior exactly (no new failure mode for callers that never
+    set it).
+    """
+    provisioned = os.environ.get(_SIGNER_WALLET_ID_ENV)
+    if provisioned and provisioned not in wallet_ids:
+        raise MultiWalletConfigError(
+            f"SIGNER_WALLET_ID={provisioned!r} (this deploy's provisioned signer wallet) "
+            f"is not among this orchestrator's wallet_ids={wallet_ids!r}. The signer "
+            "process would refuse EVERY sign() request from this orchestrator "
+            "(signer_wallet_id_mismatch -- fail-closed, but a total-stop footgun). "
+            "Fix the deploy config so SIGNER_WALLET_ID matches one of the wallet_ids "
+            "the loop actually emits (code-review fix round 2 MINOR finding)."
+        )
 
 
 def _resolve_n_max(override: int | None) -> int:
