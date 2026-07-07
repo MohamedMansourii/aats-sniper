@@ -70,14 +70,21 @@ FAST-PATH SAFETY
   corpus is a legitimate bootstrap state: the store degrades to "no history for
   anyone", never an error, never inflated data).
 
-E-M1-02 (deploy_template_fingerprint)
---------------------------------------
-  The store also indexes by ``deploy_template_fingerprint`` when present, so a
-  future fix to E-M1-02 (currently ``hash(creator+mint)`` — non-discriminating,
-  changes every launch) can be plugged in without a shape change here.  Today,
-  because the fingerprint is not yet template-stable, fingerprint-keyed lookups
-  will typically add nothing beyond the ``creator_wallet`` lookup — this module
-  does not depend on the fingerprint being fixed to be correct.
+E-M1-02 (deploy_template_fingerprint) — FIXED
+------------------------------------------------
+  The store also indexes by ``deploy_template_fingerprint`` when present.  As of
+  the E-M1-02 fix, the pump.fun `create` decoder (``aats/ingestion/decoders.py``)
+  derives this fingerprint from the mplTokenMetadata CPI's URI SHAPE (hosting
+  domain + normalized path pattern, with the per-mint hash/CID collapsed) —
+  template-invariant, so a repeat rug-factory template reused from a NEW
+  creator wallet on a NEW mint now shares the SAME fingerprint, and
+  ``get_outcomes_by_fingerprint`` can surface that history even when
+  ``creator_wallet`` differs.  Non-`create` paths (withdraw/migration, PumpSwap
+  create_pool, Raydium init) still fall back to a per-mint proxy (no metadata
+  CPI to read there) and remain non-discriminating by design — this module
+  does not depend on every path being fixed to be correct; it degrades to
+  "no extra history via fingerprint" wherever the field is a per-mint proxy
+  or ``None``.
 
 MONEY / SECRETS
 -----------------

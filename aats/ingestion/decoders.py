@@ -49,6 +49,7 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
+from urllib.parse import parse_qsl, urlparse
 
 from aats.contracts.events import (
     DetectionTransport,
@@ -187,6 +188,11 @@ CPMM_DISC_SWAP_OUTPUT = _disc("swap_base_output")
 PUMP_CREATE_ACCOUNT_IDX_MINT = 1
 PUMP_CREATE_ACCOUNT_IDX_BONDING_CURVE = 2
 PUMP_CREATE_ACCOUNT_IDX_PAYER = 0
+# mplTokenMetadata PROGRAM account (index 5) — used to identify (by account
+# equality, never a hardcoded literal) which inner instruction is the CPI into
+# mpl-token-metadata's create_metadata_account, so we can pull the URI it was
+# given (E-M1-02).  index 6 ("metadata") is the resulting PDA — not needed here.
+PUMP_CREATE_ACCOUNT_IDX_MPL_METADATA_PROGRAM = 5
 
 PUMP_BUY_ACCOUNT_IDX_MINT = 2
 PUMP_BUY_ACCOUNT_IDX_BONDING_CURVE = 3
@@ -296,10 +302,183 @@ def _staleness_ms(event_time: EventTime | None) -> int:
     return max(0, _now_ms() - event_time.block_time_ms)
 
 
-def _fingerprint(creator: str, mint: str) -> str:
-    """A simple deploy-template fingerprint (creator + mint prefix hash)."""
+def _fingerprint_by_creator_mint(creator: str, mint: str) -> str:
+    """Per-mint identity proxy — NOT template-invariant.
+
+    Used only on decode paths (withdraw/migration, PumpSwap create_pool,
+    Raydium v4/CPMM init) where no create-time metadata URI is reachable
+    (the mint already exists; nothing re-runs mpl-token-metadata's
+    create_metadata_account CPI here).  Changes every launch even for a
+    repeat creator/template — it is a fallback identity tag, not the
+    template-fingerprint semantics used on the pump.fun `create` path
+    (see `_deploy_template_fingerprint_from_uri`).
+    """
     raw = f"{creator}:{mint[:8]}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+# ---------------------------------------------------------------------------
+# Template-invariant deploy fingerprint (E-M1-02)
+#
+# Fingerprint on the metadata-URI SHAPE (scheme + host-identity + normalized
+# path pattern with the per-mint hash/CID collapsed), not on creator+mint.
+# A rug-factory that reuses the same off-chain metadata template — same
+# hosting service, same path/filename pattern — from a NEW wallet on a NEW
+# mint yields the SAME fingerprint.  A genuinely different template (a
+# different host, or a different path shape) yields a different fingerprint.
+# Undecodable/absent metadata yields None (refuse-by-default — never
+# fabricate a fingerprint from partial data).
+# ---------------------------------------------------------------------------
+
+_ALLOWED_METADATA_URI_SCHEMES = frozenset({"http", "https", "ipfs", "ar"})
+
+
+def _looks_variable(segment: str) -> bool:
+    """Heuristic: does this URL component look like a per-mint hash/ID?
+
+    Long strings (CIDs, arweave tx ids, uuids) or shorter mixed alnum
+    strings are treated as the variable, per-launch component and are
+    collapsed out of the template shape.  Short literal path words
+    ("ipfs", "metadata", "api", "v1", ...) are left untouched.
+    """
+    if not segment:
+        return False
+    if len(segment) >= 16:
+        return True
+    has_digit = any(ch.isdigit() for ch in segment)
+    has_alpha = any(ch.isalpha() for ch in segment)
+    return len(segment) >= 8 and has_digit and has_alpha
+
+
+def _normalize_path_segment(segment: str) -> str:
+    if "." in segment:
+        stem, _, ext = segment.rpartition(".")
+    else:
+        stem, ext = segment, ""
+    normalized_stem = "*" if _looks_variable(stem) else stem
+    return f"{normalized_stem}.{ext.lower()}" if ext else normalized_stem
+
+
+def _uri_shape(uri: str) -> str | None:
+    """Reduce a metadata URI to a template-stable shape string.
+
+    Returns None (refuse-by-default) for anything that cannot be confidently
+    parsed as one of the recognised metadata-hosting URI schemes.
+    """
+    if not uri:
+        return None
+    try:
+        parsed = urlparse(uri.strip())
+    except ValueError:
+        return None
+    scheme = parsed.scheme.lower()
+    if scheme not in _ALLOWED_METADATA_URI_SCHEMES:
+        return None
+    netloc = parsed.netloc
+    if not netloc:
+        return None
+    if scheme in ("http", "https"):
+        # A real hosting domain is part of the template's identity — keep it.
+        host_identity = netloc.lower()
+    else:
+        # ipfs:// / ar:// — the netloc IS the content-addressed hash (unique
+        # per upload), not a hosting identity.  Collapse it like a path hash.
+        host_identity = "*" if _looks_variable(netloc) else netloc.lower()
+
+    segments = [s for s in parsed.path.split("/") if s]
+    normalized_path = "/".join(_normalize_path_segment(s) for s in segments)
+    query_keys = sorted({k for k, _ in parse_qsl(parsed.query, keep_blank_values=True)})
+
+    shape = f"{scheme}://{host_identity}/{normalized_path}"
+    if query_keys:
+        shape += "?" + "&".join(query_keys)
+    return shape
+
+
+def _deploy_template_fingerprint_from_uri(uri: str | None) -> str | None:
+    """sha256 of the metadata-URI shape, truncated to 16 hex chars.
+
+    None in, None out (no metadata / undecodable metadata / malformed URI —
+    refuse-by-default rather than guess).
+    """
+    shape = _uri_shape(uri) if uri else None
+    if shape is None:
+        return None
+    return hashlib.sha256(shape.encode()).hexdigest()[:16]
+
+
+def _read_borsh_string(data: bytes, offset: int) -> tuple[str, int] | None:
+    """Read one Borsh-encoded string (u32 LE length prefix + utf-8 bytes).
+
+    Returns (value, next_offset), or None if the buffer is too short or the
+    bytes are not valid utf-8 — malformed input is refused, never guessed.
+    """
+    if offset + 4 > len(data):
+        return None
+    (length,) = struct.unpack_from("<I", data, offset)
+    start = offset + 4
+    end = start + length
+    if length > len(data) or end > len(data):
+        return None
+    try:
+        value = data[start:end].decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return value, end
+
+
+def _parse_mpl_create_metadata_uri(data: bytes) -> str | None:
+    """Parse the `uri` field out of an mpl-token-metadata
+    CreateMetadataAccount(V2/V3) CPI instruction payload.
+
+    Layout (Borsh): 1-byte instruction discriminant, then DataV2 { name,
+    symbol, uri, ... } — name/symbol/uri are each a u32-length-prefixed
+    UTF-8 string, in that fixed order.  We only need to walk past name and
+    symbol to reach uri; the remaining DataV2/Option fields are irrelevant
+    to the fingerprint and are never parsed.
+    """
+    if len(data) < 1:
+        return None
+    offset = 1  # skip the 1-byte instruction discriminant
+    name_result = _read_borsh_string(data, offset)
+    if name_result is None:
+        return None
+    _, offset = name_result
+    symbol_result = _read_borsh_string(data, offset)
+    if symbol_result is None:
+        return None
+    _, offset = symbol_result
+    uri_result = _read_borsh_string(data, offset)
+    if uri_result is None:
+        return None
+    uri, _ = uri_result
+    return uri or None
+
+
+def _find_mpl_metadata_uri(
+    inner_instructions: list[RawInstruction], mpl_metadata_program_id: str | None
+) -> str | None:
+    """Scan a create tx's inner instructions for the CPI into mpl-token-metadata
+    and parse the URI it was given.
+
+    `mpl_metadata_program_id` is resolved by the caller from the outer create
+    instruction's OWN account_keys (index-referenced) — never a hardcoded
+    program-ID literal in this module.  Returns None if the CPI is absent or
+    its payload is malformed (refuse-by-default).
+    """
+    if not mpl_metadata_program_id:
+        return None
+    for inner_ix in inner_instructions:
+        if inner_ix.program_id != mpl_metadata_program_id:
+            continue
+        try:
+            data = _b64_decode(inner_ix.data_b64)
+        except Exception:
+            continue
+        uri = _parse_mpl_create_metadata_uri(data)
+        if uri is not None:
+            return uri
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +574,15 @@ class PumpFunDecoder:
         if mint is None or creator is None:
             return None
 
+        # E-M1-02: fingerprint on the mplTokenMetadata CPI's URI shape (template-
+        # invariant), not on creator+mint (which changes every launch).  The mpl
+        # metadata program account is referenced BY INDEX from this create ix's
+        # own account_keys — never a hardcoded program-ID literal.
+        mpl_metadata_program_id = _safe_get_account(
+            ix.account_keys, PUMP_CREATE_ACCOUNT_IDX_MPL_METADATA_PROGRAM
+        )
+        metadata_uri = _find_mpl_metadata_uri(tx.inner_instructions, mpl_metadata_program_id)
+
         event_time = _make_event_time(tx.slot, tx.block_time_unix_s)
         if event_time is None:
             return None  # block_time absent — hold pending, never wall-clock date (T-300a)
@@ -413,7 +601,7 @@ class PumpFunDecoder:
             competitors=0,
             creator_wallet=creator,
             bundler_cluster_id=None,
-            deploy_template_fingerprint=_fingerprint(creator, mint),
+            deploy_template_fingerprint=_deploy_template_fingerprint_from_uri(metadata_uri),
             data_staleness_ms=_staleness_ms(event_time),
         )
 
@@ -546,7 +734,7 @@ class PumpFunDecoder:
             competitors=0,
             creator_wallet=creator,
             bundler_cluster_id=None,
-            deploy_template_fingerprint=_fingerprint(creator, mint),
+            deploy_template_fingerprint=_fingerprint_by_creator_mint(creator, mint),
             data_staleness_ms=_staleness_ms(event_time),
         )
 
@@ -641,7 +829,7 @@ class PumpSwapDecoder:
             competitors=0,
             creator_wallet=creator,
             bundler_cluster_id=None,
-            deploy_template_fingerprint=_fingerprint(creator, base_mint),
+            deploy_template_fingerprint=_fingerprint_by_creator_mint(creator, base_mint),
             data_staleness_ms=_staleness_ms(event_time),
         )
 
@@ -808,7 +996,7 @@ class RaydiumV4Decoder:
             competitors=0,
             creator_wallet=creator,
             bundler_cluster_id=None,
-            deploy_template_fingerprint=_fingerprint(creator, mint or coin_mint or ""),
+            deploy_template_fingerprint=_fingerprint_by_creator_mint(creator, mint or coin_mint or ""),
             data_staleness_ms=_staleness_ms(event_time),
         )
 
@@ -960,7 +1148,7 @@ class RaydiumCpmmDecoder:
             competitors=0,
             creator_wallet=creator,
             bundler_cluster_id=None,
-            deploy_template_fingerprint=_fingerprint(creator, mint),
+            deploy_template_fingerprint=_fingerprint_by_creator_mint(creator, mint),
             data_staleness_ms=_staleness_ms(event_time),
         )
 

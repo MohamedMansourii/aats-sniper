@@ -32,6 +32,46 @@ PROGRAM_IDS = {
     LaunchSource.RAYDIUM_CPMM: "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
 }
 
+# mpl-token-metadata (Metaplex Token Metadata program) — a TEST-FIXTURE-ONLY
+# constant used to build the inner CPI instruction that pump.fun's `create`
+# invokes to set on-chain name/symbol/uri.  This lives here (not in
+# aats/ingestion/decoders.py) because the production decoder never hardcodes
+# it — it resolves the mplTokenMetadata account by INDEX from the outer
+# create ix's own account_keys (execution-venue.md §3.2 build guard).
+MPL_TOKEN_METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+
+# Default metadata URI used by make_pumpfun_create_tx() — shaped like a real
+# pump.fun IPFS-gateway metadata URL, with a CID-looking (variable) filename.
+DEFAULT_METADATA_URI = "https://ipfs.io/ipfs/QmTemplateHashAAAA1111BBBB2222CCCC.json"
+
+
+def _encode_borsh_string(value: str) -> bytes:
+    """Borsh string encoding: u32 LE length prefix + utf-8 bytes."""
+    raw = value.encode("utf-8")
+    return struct.pack("<I", len(raw)) + raw
+
+
+def make_mpl_create_metadata_ix(
+    program_id: str = MPL_TOKEN_METADATA_PROGRAM_ID,
+    name: str = "Template Token",
+    symbol: str = "TMPL",
+    uri: str = DEFAULT_METADATA_URI,
+) -> RawInstruction:
+    """Build the inner CPI instruction pump.fun's `create` issues into
+    mpl-token-metadata's create_metadata_account_v3 (1-byte discriminant (33)
+    + Borsh DataV2 name/symbol/uri prefix — the fields our decoder parses).
+    """
+    data = bytes([33]) + _encode_borsh_string(name) + _encode_borsh_string(symbol) + _encode_borsh_string(uri)
+    return RawInstruction(
+        program_id=program_id,
+        data_b64=base64.b64encode(data).decode(),
+        account_keys=[
+            "MetadataPda1111111111111111111111111111111111",  # [0] metadata PDA
+            "MintPumpFun1111111111111111111111111111111111",  # [1] mint
+        ],
+        program_index=0,
+    )
+
 
 def make_registry() -> ProgramRegistry:
     """Build a test registry from fixture program IDs (no live verification)."""
@@ -50,7 +90,15 @@ def disc(name: str) -> bytes:
 # Fixture: pump.fun create
 # ---------------------------------------------------------------------------
 
-def make_pumpfun_create_tx() -> RawTransaction:
+def make_pumpfun_create_tx(
+    creator: str = "CreatorWallet11111111111111111111111111111111",
+    mint: str = "MintPumpFun1111111111111111111111111111111111",
+    metadata_uri: str | None = DEFAULT_METADATA_URI,
+    metadata_name: str = "Template Token",
+    metadata_symbol: str = "TMPL",
+    signature: str = "pumpfun_create_sig_aabbccdd",
+    malformed_metadata_ix: bool = False,
+) -> RawTransaction:
     """Fixture: pump.fun bonding-curve token creation.
 
     Verified layout:
@@ -58,25 +106,64 @@ def make_pumpfun_create_tx() -> RawTransaction:
       accounts[0] = payer (creator wallet)
       accounts[1] = mint
       accounts[2] = bondingCurve
+      accounts[3] = associatedBondingCurve
+      accounts[4] = global
+      accounts[5] = mplTokenMetadata (program)   <- referenced by index (E-M1-02)
+      accounts[6] = metadata (PDA)
+      accounts[7] = systemProgram
+
+    The `create` instruction CPIs into mpl-token-metadata's
+    create_metadata_account_v3 (an INNER instruction) with the token's
+    name/symbol/uri — that inner instruction is what carries the metadata
+    URI the deploy-template fingerprint is derived from.  Pass
+    metadata_uri=None to simulate a create with no metadata CPI at all
+    (fingerprint must be None); pass malformed_metadata_ix=True to simulate
+    a metadata CPI whose payload cannot be parsed (fingerprint must also be
+    None).
     """
     ix_data = disc("create")  # 8-byte disc only for create
     ix = RawInstruction(
         program_id=PROGRAM_IDS[LaunchSource.PUMPFUN],
         data_b64=base64.b64encode(ix_data).decode(),
         account_keys=[
-            "CreatorWallet11111111111111111111111111111111",  # payer [0]
-            "MintPumpFun1111111111111111111111111111111111",  # mint [1]
-            "BondingCurve11111111111111111111111111111111",   # bonding curve [2]
+            creator,                                              # payer [0]
+            mint,                                                 # mint [1]
+            "BondingCurve11111111111111111111111111111111",       # bonding curve [2]
+            "AssocBondingCurve111111111111111111111111111",       # assoc bonding curve [3]
+            "GlobalPumpFun11111111111111111111111111111111",      # global [4]
+            MPL_TOKEN_METADATA_PROGRAM_ID,                         # mplTokenMetadata [5]
+            "MetadataPda1111111111111111111111111111111111",      # metadata PDA [6]
+            "SystemProgram1111111111111111111111111111111111",    # systemProgram [7]
         ],
         program_index=0,
     )
+
+    inner_instructions: list[RawInstruction] = []
+    if malformed_metadata_ix:
+        # A truncated payload (disc byte only, no name/symbol/uri) — must
+        # parse to None, never a fabricated fingerprint.
+        inner_instructions.append(
+            RawInstruction(
+                program_id=MPL_TOKEN_METADATA_PROGRAM_ID,
+                data_b64=base64.b64encode(bytes([33])).decode(),
+                account_keys=["MetadataPda1111111111111111111111111111111111", mint],
+                program_index=0,
+            )
+        )
+    elif metadata_uri is not None:
+        inner_instructions.append(
+            make_mpl_create_metadata_ix(
+                name=metadata_name, symbol=metadata_symbol, uri=metadata_uri
+            )
+        )
+
     return RawTransaction(
-        signature="pumpfun_create_sig_aabbccdd",
+        signature=signature,
         slot=300_000_000,
         block_time_unix_s=1_718_700_000,
-        fee_payer="CreatorWallet11111111111111111111111111111111",
+        fee_payer=creator,
         instructions=[ix],
-        inner_instructions=[],
+        inner_instructions=inner_instructions,
         program_logs=["Program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P invoke [1]"],
     )
 
