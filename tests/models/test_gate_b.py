@@ -26,6 +26,8 @@ from __future__ import annotations
 import pytest
 
 from aats.models.gate_b import (
+    _EFFECTIVE_MIN_SAMPLE_HARD_FLOOR,
+    DEFAULT_EFFECTIVE_MIN_SAMPLE,
     DEFAULT_MIN_SAMPLE,
     GateBResult,
     TradeOutcome,
@@ -56,16 +58,22 @@ class _GaugeStub:
 # ---------------------------------------------------------------------------
 
 
-def _model_beats_baseline_fixture() -> list[TradeOutcome]:
+def _model_beats_baseline_fixture(n_win: int = 10, n_lose: int = 10) -> list[TradeOutcome]:
     """The model SELECTS the winners and SKIPS the losers the baseline takes.
 
     Baseline takes ALL candidates (naive momentum); the model takes only the winners.
     So the baseline eats the losers (negative PnL) the model avoids -> model delta > 0.
     All PnL / risk are integer lamports.  Hand-checkable.
+
+    `n_win` both-take winners (model == baseline, NOT effective — they cancel in the delta)
+    and `n_lose` model-declined losers (model != baseline, the EFFECTIVE cohort that moves the
+    delta).  Defaults (10, 10) preserve the hand-checked 20-trade fixture; the effective-sample
+    tests raise `n_lose` above the GATE-B effective floor so a genuine edge on a sufficient
+    de-risk cohort is what is exercised (not the thin-cohort withhold, which has its own test).
     """
     out: list[TradeOutcome] = []
-    # 10 winners: both take them, +0.5 SOL each at 0.1 SOL risk
-    for i in range(10):
+    # winners: both take them, +0.5 SOL each at 0.1 SOL risk (model == baseline -> cancel)
+    for i in range(n_win):
         out.append(
             TradeOutcome(
                 mint=f"win{i}",
@@ -76,8 +84,8 @@ def _model_beats_baseline_fixture() -> list[TradeOutcome]:
                 sol_at_risk_lamports=SOL // 10,  # 0.1 SOL at risk
             )
         )
-    # 10 losers: baseline takes them, model SKIPS them, -0.4 SOL each at 0.1 SOL risk
-    for i in range(10):
+    # losers: baseline takes them, model SKIPS them, -0.4 SOL each (model != baseline -> effective)
+    for i in range(n_lose):
         out.append(
             TradeOutcome(
                 mint=f"lose{i}",
@@ -145,14 +153,16 @@ class TestDeltaCorrectness:
         assert res.n_trades == 20
 
     def test_gate_b_passes_when_lower_bound_positive(self):
-        # 20-trade fixture: pass min_sample=10 (the hard floor) so the MINIMUM-SAMPLE
-        # guard is satisfied and we test what this case means — a GENUINE edge with a
-        # sufficient sample passes.  (The guard itself is proven in TestMinSampleGuard.)
-        outs = _model_beats_baseline_fixture()
+        # 40-trade fixture with 30 EFFECTIVE (model!=baseline) decisions: pass min_sample=10
+        # (the total-n hard floor) so the MINIMUM-SAMPLE guard is satisfied AND the effective
+        # cohort clears the effective floor — we test what this case means: a GENUINE edge on a
+        # sufficient de-risk cohort passes.  (Each guard is proven separately below.)
+        outs = _model_beats_baseline_fixture(n_win=10, n_lose=30)
         res = compute_gate_b_delta(outs, seed=7, n_bootstrap=2000, min_sample=10)
         assert res.delta > 0
         assert res.lower_95_bound > 0
         assert res.min_sample_met is True
+        assert res.effective_sample_met is True  # 30 model!=baseline decisions clear the floor
         assert res.gate_b_pass is True
 
     def test_bootstrap_is_deterministic(self):
@@ -340,10 +350,12 @@ class TestFailClosed:
         assert res.gate_b_pass is False
 
     def test_min_sample_guard_is_tightenable(self):
-        """A caller may RAISE the bar (de-risk).  A 20-trade genuine edge passes at the
-        floor but is WITHHELD when min_sample is tightened above the sample size."""
-        outs = _model_beats_baseline_fixture()  # 20 trades, real edge
+        """A caller may RAISE the total-n bar (de-risk).  A 42-trade genuine edge (28 effective
+        decisions, clearing the effective floor) passes at the total-n floor but is WITHHELD when
+        min_sample is tightened above the total sample size."""
+        outs = _model_beats_baseline_fixture(n_win=14, n_lose=28)  # 42 trades, 28 effective
         passed = compute_gate_b_delta(outs, seed=7, n_bootstrap=2000, min_sample=10)
+        assert passed.effective_sample_met is True  # the effective guard is not what is tested here
         assert passed.gate_b_pass is True
         withheld = compute_gate_b_delta(outs, seed=7, n_bootstrap=2000, min_sample=50)
         assert withheld.lower_95_bound > 0  # the edge is real...
@@ -385,3 +397,124 @@ class TestFailClosed:
         res = compute_gate_b_delta(outs, seed=9, n_bootstrap=2000)
         # noise: the lower 95% bound straddles / is below 0 -> not a pass
         assert res.gate_b_pass is False
+
+
+# ---------------------------------------------------------------------------
+# 9. EFFECTIVE-SAMPLE GUARD (thin-cohort fragility — gate on model!=baseline, not total-n)
+# ---------------------------------------------------------------------------
+
+
+def _thin_effective_cohort(n_both_take: int, n_effective: int) -> list[TradeOutcome]:
+    """A DILUTED corpus: many both-take trades (model == baseline, cancel in the delta) around a
+    THIN de-risk cohort (model declines a proven loser) that carries the ENTIRE positive delta.
+
+    This is the exact shape the total-n guard is blind to: the effective cohort is
+    `n_effective` while total n is `n_both_take + n_effective`.
+    """
+    out: list[TradeOutcome] = []
+    slot = 0
+    for i in range(n_both_take):  # model == baseline (both take a flat winner) -> NOT effective
+        out.append(
+            TradeOutcome(
+                mint=f"both{i}",
+                decision_slot=slot,
+                model_selected=True,
+                baseline_selected=True,
+                net_pnl_lamports=SOL // 100,  # small positive, identical to both cohorts
+                sol_at_risk_lamports=SOL // 10,
+            )
+        )
+        slot += 1
+    for i in range(n_effective):  # model declines a loser the baseline eats -> EFFECTIVE
+        out.append(
+            TradeOutcome(
+                mint=f"eff{i}",
+                decision_slot=slot,
+                model_selected=False,
+                baseline_selected=True,
+                net_pnl_lamports=-SOL // 2,  # the loss the model avoids (drives the +delta)
+                sol_at_risk_lamports=SOL // 10,
+            )
+        )
+        slot += 1
+    return out
+
+
+class TestEffectiveSampleGuard:
+    def test_thin_effective_cohort_is_withheld_despite_large_total_n(self):
+        """The fragility case: a HUGE total sample (well past the total-n floor) wrapped around
+        ~12 model!=baseline decisions must NOT pass — the delta rides a thin de-risk cohort."""
+        outs = _thin_effective_cohort(n_both_take=4000, n_effective=12)
+        res = compute_gate_b_delta(outs, seed=3, n_bootstrap=2000)
+        assert res.n_trades == 4012
+        assert res.n_effective == 12
+        assert res.delta > 0  # the point delta is positive...
+        assert res.lower_95_bound > 0  # ...and the total-n i.i.d. bound clears zero...
+        assert res.min_sample_met is True  # ...and the TOTAL-n guard is satisfied (4012 >> 30)...
+        assert res.effective_sample_met is False  # ...but the EFFECTIVE cohort is too thin.
+        assert res.gate_b_pass is False  # withheld — no capital on ~12 decisions
+        assert "WITHHELD" in res.summary()
+        assert "model!=baseline" in res.summary()
+
+    def test_eight_to_twenty_decisions_never_pass(self):
+        """The whole ~8-20-decision fragility band must be rejected, even at the LOOSEST legal
+        effective floor (a caller cannot license a pass on it)."""
+        for n_eff in (8, 12, 16, 20):
+            outs = _thin_effective_cohort(n_both_take=200, n_effective=n_eff)
+            # Try to defeat the guard with the smallest possible effective floor.
+            res = compute_gate_b_delta(outs, seed=1, n_bootstrap=1000, effective_min_sample=1)
+            assert res.effective_min_sample >= _EFFECTIVE_MIN_SAMPLE_HARD_FLOOR
+            assert res.effective_min_sample > 20  # the band is below the clamped floor
+            assert res.gate_b_pass is False, f"a {n_eff}-decision delta must not pass"
+
+    def test_effective_floor_cannot_be_defeated_by_caller(self):
+        """A caller cannot pass effective_min_sample=1 to license a thin cohort — it is clamped
+        UP to the hard floor (>= 21), exactly like the total-n guard's floor."""
+        outs = _thin_effective_cohort(n_both_take=100, n_effective=15)
+        res = compute_gate_b_delta(outs, seed=1, n_bootstrap=1000, effective_min_sample=1)
+        assert res.effective_min_sample >= _EFFECTIVE_MIN_SAMPLE_HARD_FLOOR
+        assert res.effective_sample_met is False
+        assert res.gate_b_pass is False
+
+    def test_sufficient_effective_cohort_passes(self):
+        """De-risk monotonicity check: the SAME edge on a SUFFICIENT effective cohort (above the
+        floor) DOES pass — the guard withholds thin cohorts, it is not a blanket veto."""
+        outs = _thin_effective_cohort(n_both_take=100, n_effective=40)
+        res = compute_gate_b_delta(outs, seed=1, n_bootstrap=2000)
+        assert res.n_effective == 40
+        assert res.effective_sample_met is True
+        assert res.delta > 0
+        assert res.gate_b_pass is True
+
+    def test_effective_guard_never_turns_fail_into_pass(self):
+        """The guard is DE-RISK only: a model that LOSES to the baseline fails regardless of how
+        large the effective cohort is — the effective floor can only withhold, never manufacture."""
+        outs: list[TradeOutcome] = []
+        for i in range(60):  # model eats losers the baseline skips -> negative delta, 60 effective
+            outs.append(
+                TradeOutcome(
+                    mint=f"bad{i}",
+                    decision_slot=i,
+                    model_selected=True,
+                    baseline_selected=False,
+                    net_pnl_lamports=-SOL // 2,
+                    sol_at_risk_lamports=SOL // 10,
+                )
+            )
+        res = compute_gate_b_delta(outs, seed=1, n_bootstrap=2000)
+        assert res.n_effective == 60
+        assert res.effective_sample_met is True
+        assert res.delta < 0
+        assert res.gate_b_pass is False
+
+    def test_default_effective_min_sample_rejects_the_fragility_band(self):
+        assert DEFAULT_EFFECTIVE_MIN_SAMPLE > 20
+        assert _EFFECTIVE_MIN_SAMPLE_HARD_FLOOR > 20
+
+    def test_effective_field_counts_model_ne_baseline(self):
+        """`n_effective` is exactly the count of decisions where model_selected != baseline_selected
+        (not total-n, not n_model_selected)."""
+        outs = _thin_effective_cohort(n_both_take=7, n_effective=5)
+        res = compute_gate_b_delta(outs, seed=1, n_bootstrap=500)
+        assert res.n_trades == 12
+        assert res.n_effective == 5

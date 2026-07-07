@@ -35,10 +35,10 @@ import pytest
 from aats.backtest.block_time_cache import (
     BlockTimeCache,
     CachingBlockTimeResolver,
-    PrefetchedBlockTimeResolver,
     prefetch_from_corpus,
     resolve_block_times,
 )
+from aats.backtest.momentum_harness import build_momentum_from_corpus
 from aats.backtest.outcome_harness import (
     BlockTime,
     BlockTimeUnavailable,
@@ -48,12 +48,10 @@ from aats.backtest.outcome_harness import (
     read_corpus,
     to_entry_record,
 )
-from aats.backtest.momentum_harness import build_momentum_from_corpus
 from aats.backtest.run_edge_proof import (
     EXIT_FAIL_CLOSED,
     run_edge_proof,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test doubles (no live network)

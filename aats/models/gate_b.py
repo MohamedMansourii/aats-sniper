@@ -49,6 +49,21 @@ positive-looking delta did not pass.  Default `min_sample` is conservative (the 
 bound is unreliable far above this); it is tightenable (raise) per AUDIT-risktiers, and the
 floor is enforced so a caller cannot pass `min_sample=1` to defeat it.
 
+EFFECTIVE-SAMPLE GUARD (the thin-cohort fragility fix — gate on the DECISION cohort)
+===================================================================================
+The total-n guard above counts EVERY recorded trade, but the delta is moved ONLY by the
+trades where the model's selection differs from the baseline's (`model_selected !=
+baseline_selected`): a trade both cohorts take contributes the same per-trade ratio to both
+sides and cancels.  So a corpus of thousands of both-take trades wrapped around ~8-20
+model-vs-baseline decisions clears a total-n floor of 30 while the whole edge rides a thin,
+often-correlated de-risk cohort — the exact fragility that flipped an n=497 "edge" once it
+grew to n=4,187.  GATE-B therefore ALSO gates on the EFFECTIVE cohort: below
+`effective_min_sample` decisions where model != baseline, `gate_b_pass` is forced False no
+matter how large the total sample or how positive the bound.  Like the total-n guard it is
+DE-RISK ONLY (withholds a pass, never manufactures one) and tighten-only (a hard floor >= 21
+rejects the whole ~8-20 band so a caller cannot license a pass on a handful of decisions).
+The withheld reason (`effective_sample_met`, `n_effective`) is surfaced to telemetry.
+
 WHY THIS IS DISTINCT FROM monitor.py (the AUC auto-disable)
 ==========================================================
 `monitor.py` (T-310) is the LIGHTWEIGHT, continuous auto-disable: a ranking-quality (AUC)
@@ -97,6 +112,23 @@ DEFAULT_MIN_SAMPLE = 30
 # Absolute floor: even an explicit caller cannot drop the guard below this — a
 # `min_sample` of 1 or 2 would re-open exactly the noise hole this guard closes.
 _MIN_SAMPLE_HARD_FLOOR = 10
+
+# EFFECTIVE-SAMPLE guard (the thin-cohort fragility fix).  The headline delta is driven
+# ENTIRELY by the trades where the model's selection DIFFERS from the baseline's: a trade
+# both cohorts take (model == baseline) contributes the SAME per-trade ratio to both
+# cohorts and cancels in the delta.  So the real evidence behind a model-vs-baseline edge
+# is the count of DECISIONS where model != baseline (the model's de-risk cohort), NOT the
+# total recorded n.  A total-n guard is defeated by dilution: 4,000 both-take trades around
+# ~8-20 model!=baseline decisions clears a total-n floor of 30 while the delta rides on a
+# handful of correlated draws — exactly the thin cohort that flipped an n=497 "edge" once
+# it grew to n=4,187.  GATE-B therefore ALSO requires this many EFFECTIVE (model != baseline)
+# decisions before it may pass.  De-risk only: it can withhold a pass, never manufacture one.
+DEFAULT_EFFECTIVE_MIN_SAMPLE = 25
+# Absolute floor: even an explicit caller cannot drop the effective guard below this.  It is
+# set to REJECT the entire ~8-20-decision fragility band (a pass needs strictly more than 20
+# effective decisions at the loosest legal setting), so no caller can license capital on a
+# delta riding a thin de-risk cohort.
+_EFFECTIVE_MIN_SAMPLE_HARD_FLOOR = 21
 
 # ---------------------------------------------------------------------------
 # The recorded-data record GATE-B consumes (produced by the clean-room harness)
@@ -228,15 +260,31 @@ class GateBResult:
     # the bootstrap bound (de-risk: withhold the pass, never manufacture one).
     min_sample: int
     min_sample_met: bool
-    # True iff lower_95_bound > 0 AND min_sample_met (a positive bound on too few
-    # trades does NOT pass — that would be acting on noise).
+    # EFFECTIVE-SAMPLE guard (thin-cohort fragility).  `n_effective` is the count of
+    # decisions where model_selected != baseline_selected — the ONLY trades that move the
+    # delta (both-take trades cancel).  `effective_min_sample` is the floor of effective
+    # decisions required; `effective_sample_met` is True iff n_effective >= it.  When False,
+    # gate_b_pass is forced False no matter how many total trades or how positive the bound —
+    # a delta riding a thin de-risk cohort is not evidence.  De-risk only (never a pass-maker).
+    n_effective: int
+    effective_min_sample: int
+    effective_sample_met: bool
+    # True iff lower_95_bound > 0 AND min_sample_met AND effective_sample_met (a positive
+    # bound on too few TOTAL or too few EFFECTIVE decisions does NOT pass — that is noise).
     gate_b_pass: bool
 
     def summary(self) -> str:
         verdict = "PASS" if self.gate_b_pass else "FAIL"
-        guard = "" if self.min_sample_met else f" [WITHHELD: n<{self.min_sample} min-sample]"
+        reasons: list[str] = []
+        if not self.min_sample_met:
+            reasons.append(f"n<{self.min_sample} min-sample")
+        if not self.effective_sample_met:
+            reasons.append(
+                f"effective_n={self.n_effective}<{self.effective_min_sample} model!=baseline"
+            )
+        guard = f" [WITHHELD: {'; '.join(reasons)}]" if reasons else ""
         return (
-            f"GATE-B [{self.unit_of_risk}] n={self.n_trades}: "
+            f"GATE-B [{self.unit_of_risk}] n={self.n_trades} (effective={self.n_effective}): "
             f"model={self.model_net_pnl_per_risk:+.6f} "
             f"baseline={self.baseline_net_pnl_per_risk:+.6f} "
             f"delta={self.delta:+.6f} (lower95={self.lower_95_bound:+.6f}, "
@@ -251,6 +299,7 @@ def compute_gate_b_delta(
     n_bootstrap: int = 2000,
     seed: int = 20260616,
     min_sample: int = DEFAULT_MIN_SAMPLE,
+    effective_min_sample: int = DEFAULT_EFFECTIVE_MIN_SAMPLE,
 ) -> GateBResult:
     """Compute the GATE-B model-vs-baseline net-PnL-per-unit-risk DELTA on recorded data.
 
@@ -274,6 +323,11 @@ def compute_gate_b_delta(
         min_sample: MINIMUM recorded trades before GATE-B may PASS / act on a change
             (AUDIT-risktiers).  Below this, gate_b_pass is forced False (de-risk).
             Clamped UP to a hard floor so it can only be tightened, never defeated.
+        effective_min_sample: MINIMUM decisions where model != baseline (the cohort that
+            actually moves the delta) before GATE-B may PASS.  Below this, gate_b_pass is
+            forced False even if the total sample and the bootstrap bound would pass — the
+            thin-cohort guard.  Clamped UP to a hard floor (>= 21) so a caller can only
+            tighten it, never lower it to license a delta riding ~8-20 decisions.
 
     Returns a GateBResult.  Raises ValueError on an empty record set (no data => no metric;
     fail closed, never a fabricated 0).
@@ -287,7 +341,17 @@ def compute_gate_b_delta(
     # MINIMUM-SAMPLE guard (AUDIT-risktiers).  Clamp UP to the hard floor — a caller
     # may RAISE the bar (de-risk) but may never LOWER it below the floor that would
     # re-open the small-sample noise hole.  This is a tighten-only knob.
-    effective_min_sample = max(int(min_sample), _MIN_SAMPLE_HARD_FLOOR)
+    total_min_sample = max(int(min_sample), _MIN_SAMPLE_HARD_FLOOR)
+
+    # EFFECTIVE-SAMPLE guard (thin-cohort fragility).  The effective cohort is the set of
+    # decisions where the model DIFFERS from the baseline (model_selected != baseline_selected)
+    # — the only trades that move the delta; both-take trades contribute identically to both
+    # cohorts and cancel.  Clamp the floor UP to its hard floor so it is tighten-only: a delta
+    # riding a thin de-risk cohort can never be licensed.
+    effective_floor = max(int(effective_min_sample), _EFFECTIVE_MIN_SAMPLE_HARD_FLOOR)
+    n_effective = sum(
+        1 for o in outcomes if bool(o.model_selected) != bool(o.baseline_selected)
+    )
 
     model_ratios = _cohort_per_trade_ratios(outcomes, model=True)
     base_ratios = _cohort_per_trade_ratios(outcomes, model=False)
@@ -308,12 +372,13 @@ def compute_gate_b_delta(
         boot_deltas[b] = m - bl
     lower_95 = float(np.percentile(boot_deltas, 2.5))
 
-    # MINIMUM-SAMPLE guard: GATE-B may only ACT on (pass) a model-vs-baseline change
-    # with enough recorded trades.  Below the floor the bootstrap bound is not
-    # evidence, so the pass is WITHHELD — de-risk only: this can turn a would-be PASS
-    # into a FAIL, never the reverse.
-    min_sample_met = n >= effective_min_sample
-    gate_b_pass = bool(lower_95 > 0.0) and min_sample_met
+    # SAMPLE guards: GATE-B may only ACT on (pass) a model-vs-baseline change with enough
+    # RECORDED trades AND enough EFFECTIVE (model != baseline) decisions.  Below either floor
+    # the bootstrap bound is not evidence, so the pass is WITHHELD — de-risk only: this can turn
+    # a would-be PASS into a FAIL, never the reverse.
+    min_sample_met = n >= total_min_sample
+    effective_sample_met = n_effective >= effective_floor
+    gate_b_pass = bool(lower_95 > 0.0) and min_sample_met and effective_sample_met
 
     return GateBResult(
         n_trades=n,
@@ -323,8 +388,11 @@ def compute_gate_b_delta(
         delta=float(delta),
         lower_95_bound=lower_95,
         n_bootstrap=int(n_bootstrap),
-        min_sample=int(effective_min_sample),
+        min_sample=int(total_min_sample),
         min_sample_met=bool(min_sample_met),
+        n_effective=int(n_effective),
+        effective_min_sample=int(effective_floor),
+        effective_sample_met=bool(effective_sample_met),
         gate_b_pass=gate_b_pass,
     )
 

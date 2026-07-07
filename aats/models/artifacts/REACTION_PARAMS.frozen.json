@@ -1,0 +1,48 @@
+{
+  "_comment": [
+    "FROZEN reaction / front-run source-reputation-filter constants. DO NOT EDIT (retune) after the",
+    "first reaction edge-proof run. This is the audit-parity twin of MOMENTUM_PARAMS.frozen.json,",
+    "REALIZABLE_EXIT_PARAMS.frozen.json, and baseline.frozen.json: it externalizes the reaction",
+    "harness's model constants so they are a declared, change-controlled artifact rather than magic",
+    "numbers buried in code (anti-p-hacking, red-team flaw 2A).",
+    "",
+    "The canonical hash in `frozen_hash` is recomputed deterministically from `params` alone",
+    "(aats/backtest/reaction_harness.py: _canonical_reaction_hash); a test FAILS if any hashed value",
+    "drifts. The threshold is a Decimal-as-STRING (never float); counts are int; the policy flag is",
+    "bool (data-models.md §0).",
+    "",
+    "THE MODEL RULE (reaction_harness.py, decide_reaction_entry): the BASELINE follows EVERY signal.",
+    "The MODEL follows every signal EXCEPT it DECLINES a signal whose source has a PROVEN track record",
+    "(>= `min_prior_signals` eligible strictly-prior + already-observed same-source outcomes) whose",
+    "MEAN realized net-PnL-per-SOL is BELOW `reputation_threshold`. Below the track-record floor the",
+    "source is on the NEUTRAL PRIOR (`neutral_prior_selects`). The model is a strict SUBSET of the",
+    "baseline (it can only DE-RISK — drop proven-loser sources — never add a signal). The reputation",
+    "is MONEY (mean net-PnL-per-SOL), NEVER a win-rate.",
+    "",
+    "ENTRY realism: `entry_latency_haircut_bps` worsens the front-run entry fill (fill HIGHER than the",
+    "signal tick — the reaction has already begun moving the price). Conservative: it can only LOWER",
+    "realized PnL, never fabricate a GO. Distinct from the ~6% cost stack's AMM entry slippage.",
+    "",
+    "FROZEN — MUST NOT BE TUNED AGAINST THE CORPUS. Changing a value here is p-hacking the selection",
+    "against the scoreboard; it is a TEST FAILURE, not an edit. Open an ADR + delta notice instead.",
+    "See aats/models/artifacts/MODEL_CARD_reaction.md."
+  ],
+  "schema_version": "1.0.0",
+  "params": {
+    "reputation_threshold": "0",
+    "min_prior_signals": 3,
+    "neutral_prior_selects": true,
+    "entry_latency_haircut_bps": 50
+  },
+  "params_provenance": {
+    "reputation_threshold": "The net-PnL-per-SOL floor a source's PROVEN track record must clear for the model to keep following it. '0' = do not follow a source whose realized prior track record is net-negative per SOL — a structural floor, NOT a fitted level. Decimal-as-string, never float. A signed money-per-risk ratio, never a win-rate.",
+    "min_prior_signals": "How many ELIGIBLE (strictly-prior signal_block_time < current AND already-observed outcome_resolved <= current) same-source outcomes are required before the reputation threshold gate applies. Below this a source is on the NEUTRAL PRIOR. 3 = a minimal track record before demoting a source. Illustrative structural constant, NOT fitted. Integer.",
+    "neutral_prior_selects": "The neutral-prior policy: whether a source with too short a track record is FOLLOWED. true = innocent-until-proven-loser (the model only demotes a source once it has PROVEN itself a net loser over min_prior_signals outcomes), keeping the model a strict de-risk subset of the follow-every-signal baseline. Bool.",
+    "entry_latency_haircut_bps": "Front-run entry-latency haircut (bps): a real bot cannot fill at the exact signal tick, so entry_fill = signal_price_sol * (1 + bps/10000) (fill HIGHER = worse). 50 bps (0.5%) models the few-hundred-ms lag while the reaction begins. Conservative — can only LOWER realized PnL, never fabricate a GO. Distinct from and stacks with the ~6% cost stack's AMM entry slippage. Integer bps."
+  },
+  "baseline_rule": "follow EVERY signal — enter on every recorded signal at a fixed per-trade risk. No free numeric parameter; it is the strict superset of the model's selection.",
+  "invariant": "MODEL selection is a strict SUBSET of the BASELINE selection (the model can only DECLINE a proven-loser source, never add a signal). GATE-B therefore measures exactly: does demoting proven-loser sources beat following every signal, net of cost, per unit risk?",
+  "frozen_at_first_fit": true,
+  "first_fit_recorded_at_ms": 1783440000000,
+  "frozen_hash": "860f26aec0d83ffd6d9fd8484bcd1ec1b7a3ed84e6b35c08e8055d4d46a9e59b"
+}

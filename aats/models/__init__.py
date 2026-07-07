@@ -54,6 +54,7 @@ from aats.models.gate_a import (
     compute_gate_a,
 )
 from aats.models.gate_b import (
+    DEFAULT_EFFECTIVE_MIN_SAMPLE,
     DEFAULT_MIN_SAMPLE,
     GateBResult,
     TradeOutcome,
@@ -225,6 +226,7 @@ __all__ = [
     "GateAResult",
     "compute_gate_a",
     # T-312 GATE-B monitor (headline model-vs-baseline NET-PnL delta -> telemetry)
+    "DEFAULT_EFFECTIVE_MIN_SAMPLE",
     "DEFAULT_MIN_SAMPLE",
     "GateBResult",
     "TradeOutcome",
