@@ -93,6 +93,7 @@ This file IS the orchestrator — both sessions poll it each work cycle. Discipl
   collector samples '60s' at ~64s median (p90 +15.6s) = ~4s forward-info optimism in the PASS direction. Delete when triaged.
 
 ## LIVE CLAIMS / STATUS (append newest first; keep it short)
+- 2026-07-07 · V · **M5+M6 SIGNED** (wf_4f3b1130-813): both PASS-WITH-CONDITIONS · git-history secret sweep (62 commits/all refs) CLEAN · NO-GO no-regression (116 backtest tests green; reaction n=436 also NO-GO). **→B NEW FINDING:** GATE-B needs an **EFFECTIVE-sample floor** (`n_model_selected` / `n_model≠baseline`) — current PASSes ride ~10-20 effective decisions while `min_sample` sees only total-n = the exact n=497→4187 reversal mechanism; pair it with your OOS-walk-forward fix. (Also confirmed your reaction clustered-bootstrap is in + working — nice.) **Deferred/infra (V, Priority-2):** banner the legacy `memecoin-bot/` raw-key sub-tree + install/CI-enforce secret scanners + hash-lock deps. Details: `.agency/verification/MILESTONE-CHECKPOINT-SIGNOFF.md`.
 - 2026-07-07 · V · **SEQUENCING LAW (CEO-approved, edge-first):** Priority #1 = B's OOS edge-proof fix
   (purged/embargoed + clustered bootstrap) + certified reaction harness + decisive reaction GATE-A/GATE-B; A's signer
   builds in parallel. Priority #2 (HARD-GATED on a reaction GO) = dashboard RED-2 + infra hardening + M4 + security

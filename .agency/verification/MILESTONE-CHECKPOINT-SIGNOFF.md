@@ -19,3 +19,38 @@
 - **TPM:** M3 coverage is broad and honest; M4 (live E2E) is the real gap. Sign-off is **conditional** and explicitly does NOT authorize any capital path.
 
 **Overall: the system is in the correct honest posture (capital disabled, edge NO-GO) and is safe as a paper platform, but is NOT ready for any step toward real capital. Two REDs + the in-sample edge-proof gate remain.**
+
+---
+
+## M5 / M6 dedicated re-verification (2026-07-07 · workflow `wf_4f3b1130-813`)
+Both **PASS-WITH-CONDITIONS · ZERO new RED · ZERO newly-discovered secrets · ZERO NO-GO→GO regression.**
+
+**M5 (crypto-security-engineer):** Full **git-history secret sweep over all 62 commits / all refs + tracked tree +
+uncommitted files = CLEAN** — 0 keypair arrays, 0 base58 secret keys (90 long-base58 hits all proven public tx
+signatures / `_FAKE_SIG` test constants / base64 wire-bytes), 0 `sk-`/`ghp_`/`xox`/AWS keys, 0 PEM blocks; every
+`.env.example` secret field is a placeholder/Vault-path across all history. Key isolation confirmed by construction.
+Carryover go-live conditions still OPEN (HIGH-for-go-live, N/A today): signer scaffold (F1/C1), DEVNET-overrides-
+DRY_RUN w/ no genesis-hash assert (F2/C3), operator_token defaults to `dev-token` (F5/C6), non-constant-time auth
+(LOW). **NEW (YELLOW/LOW):** the tracked legacy Go sub-tree `memecoin-bot/` uses the raw-`SOLANA_PRIVATE_KEY`-in-env
+anti-pattern (empty placeholder, NOT wired into the AATS stack/compose/CI) — operator-confusion hygiene risk; banner
+or remove. **Honest gap:** gitleaks/trufflehog/pip-audit/osv/cargo-audit not installed → manual regex sweep
+substituted, no live CVE scan (condition C4/C9).
+
+**M6 (backtest-qa-engineer):** **NO regression** — `tests/backtest` = 116 passed; NO-GO holds on all three
+strategies (GATE-A absolute-PnL FAILS while GATE-B relative "PASSes" by declining trades; reaction on the live real
+corpus n=436 = NO-GO, GATE-A model −1.755 SOL). Leak guards verified load-bearing at runtime; fail-closed-on-empty
+confirmed. **Good news:** B has ALREADY fixed the reaction clustering concern — `reaction_gate` uses a source+time-
+block clustered bootstrap. **Two forward-looking YELLOW conditions gate any FUTURE GO:** (a) the real-corpus proof is
+scored **IN-SAMPLE** (the purged/embargoed walk-forward windower runs only on synthetic data) → replace with a
+real-corpus OOS purged/embargoed walk-forward (≥5 folds); (b) **GATE-B needs an EFFECTIVE-sample floor**
+(`n_model_selected` / `n_model≠baseline`) — current PASSes ride on ~10–20 effective decisions while `min_sample` sees
+only total-n (the exact thin-cohort fragility that reversed n=497 at n=4,187). **Honest gap:** couldn't re-run the
+launch/momentum proof on the *current* 11,453-line corpus (RPC_PRIMARY unset this session → path fails closed); an
+RPC-backed re-run is advisable, though "more data → stronger NO-GO" makes a GO regression implausible.
+
+**Carry-forward blockers on the go-live gate (governance):** (1) build + re-audit the real signer before any key;
+(2) install + CI-enforce secret scanners + a live CVE scan; (3) hash-lock deps + `Cargo.lock` + SHA-pin CI actions;
+(4) fail-closed `operator_token` + constant-time auth; (5) **real-corpus OOS purged/embargoed walk-forward + an
+effective-sample GATE-B floor before any GO may license capital**; (6) banner/remove the legacy `memecoin-bot/` raw-key sub-tree.
+
+**Milestone ledger now: M1 PASS-WITH-DRIFT · M2 PASS-WITH-FINDINGS · M3 COMPLETE · M4 OPEN (blocked on producer wiring) · M5 PASS-WITH-CONDITIONS · M6 PASS-WITH-CONDITIONS.** Capital stays DISABLED; edge is a genuine NO-GO; no GO fabricated.
