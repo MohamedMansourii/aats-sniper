@@ -1,5 +1,44 @@
 # ▶ RESUME HERE — AATS (60-second orientation)
 
+## ⏸ PAUSED — RESUME CHECKPOINT (2026-07-07, weekly limit)
+
+### THE HEADLINE — DECISIVE EDGE VERDICT = ⛔ NO-GO (project resolved)
+The reaction/whale-front-run thesis — the last strategy with a real prior — **ran through the full capital-licensing
+walk-forward and returned NO-GO.** Result (n=2,218 whale signals; pooled OOS n=1,184; **effective=310**; 6/6 folds,
+purged+embargoed, clustered bootstrap, realizable exit): **GATE-B PASS out-of-sample** (delta +0.063, lower95 +0.003 —
+the model has GENUINE OOS selection skill, the first strategy ever to pass GATE-B OOS) **but GATE-A FAIL** (model
+net-of-cost −0.028/SOL — it still LOSES money). Real skill, unprofitable net of the ~6% cost gate. **All three theses
+(launch, momentum, reaction) are decisively NO-GO. No solo-operator edge net of cost.** Per the CEO's IF-NO-GO
+directive: **this IS completion** — AATS is a proven-safe paper platform; Priority-2 NOT built; **no capital moves**.
+
+### DONE (committed)
+- `8fa5462` — capital-licensing edge proof COMPLETE: `licensing.py` purged/embargoed walk-forward + effective-sample
+  GATE-B floor (hard-clamp ≥21) + certified `reaction_harness.py` (dual-G3 PASS, no leaks, 164 backtest tests green).
+- Verification M1–M3, M5, M6 signed + M6 gap-closer + M4 pre-flight (`.agency/verification/`).
+- DECISIVE reaction verdict RAN (NO-GO) — captured here + in STATE; standalone artifact
+  `.agency/verification/DECISIVE-REACTION-VERDICT-2026-07-07.md` is PENDING (write was interrupted by the pause).
+
+### IN-FLIGHT (may be incomplete / killed by the pause — resume before trusting)
+- **Signer workflow** `wczblnbbu` · runId **`wf_cddc4d98-dc3`** · scriptPath
+  `C:\Users\manso\.claude\projects\C--dev-aats\251882c6-93d6-4da2-9cf8-f12679c40782\workflows\scripts\aats-real-signer-wf_cddc4d98-dc3.js`
+  — building the real ADR-0009 signer (enforcer + refusal tests + remove mock defaults). **NOT gated, NOT committed.**
+  Resume: `Workflow({scriptPath, resumeFromRunId:"wf_cddc4d98-dc3"})` then dual-G3-gate + commit the signer lane.
+- Recorders: reaction recorder + launch collector (PID 22012) accruing autonomously (reaction 2,264; launch 16,707).
+
+### UNCOMMITTED (signer lane — leave until the signer workflow is gated; do NOT mix with other commits)
+`aats/execution/{__init__,exceptions,jito_jupiter_venue,rpc_client,tx_builder,ed25519_field,signer_enforcer,signer_process,solana_wire}.py`,
+`.env.example`, `config/{program-allowlist,signer-policy}.json`, `ADR-0009` (M) + `ADR-0015` (new),
+`tests/execution/{test_jito_jupiter_venue,test_ed25519_field,test_signer_enforcer,test_signer_process,test_solana_wire}.py`.
+
+### NEXT UNIT (on resume, in order)
+1. Resume/gate the signer workflow `wf_cddc4d98-dc3`; if PASS, commit the signer lane (files above), message
+   `feat(execution): real ADR-0009 signer enforcer (dual-G3 PASS)`. Ground-truth first: `git status` + full suite.
+2. Write the standalone `DECISIVE-REACTION-VERDICT-2026-07-07.md` (content above) + update STATE with the final conclusion.
+3. **STOP — program complete.** CP-07 / M4 / Priority-2 are MOOT (edge NO-GO). No capital moves. Deliver the honest conclusion to the CEO.
+
+---
+
+
 ## 🚦 CONTINUOUS-DRIVE STATE (2026-07-07 — STANDING ORDER: drive to completion, DO NOT STOP)
 CEO issued **CONTINUOUS AUTONOMOUS DRIVE MODE**. Do NOT wait for "continue". Chain work until: scope done / a
 real CAPITAL escalation / a hard blocker / the decisive reaction GO-NO-GO. End every turn on an ACTION, never a question.

@@ -1,5 +1,13 @@
 # AATS — STATE.md · MASTER RESUME SPINE
 
+> ⏸ **PAUSED 2026-07-07 (weekly limit).** ⛔ **DECISIVE EDGE VERDICT = NO-GO.** The reaction/whale-front-run thesis
+> ran through the full capital-licensing walk-forward (n=2,218; OOS n=1,184; effective=310; purged+embargoed; clustered
+> bootstrap): **GATE-B PASS out-of-sample** (real selection skill — a first) **but GATE-A FAIL** (model loses money
+> net-of-cost, −0.028/SOL). **All three theses (launch/momentum/reaction) decisively NO-GO — no solo-operator edge net
+> of cost.** Per IF-NO-GO = **completion**: proven-safe paper platform, Priority-2 NOT built, **NO capital moves**.
+> Edge-proof machinery committed `8fa5462` (walk-forward + effective-sample floor + certified reaction harness, dual-G3).
+> **IN-FLIGHT:** signer workflow `wf_cddc4d98-dc3` (uncommitted signer lane) — resume + gate per RESUME-HERE §NEXT.
+
 > **READ THIS FILE FIRST, THEN `.agency/RESUME-HERE.md`.** Single source of truth for resuming across a session
 > restart / model switch. **You are the SAME worker continuing** — the **Agency Runtime**. Do not restart from zero.
 > **Compacted 2026-07-06** after the CEO's checkpoint directive.
