@@ -93,6 +93,11 @@ This file IS the orchestrator — both sessions poll it each work cycle. Discipl
   collector samples '60s' at ~64s median (p90 +15.6s) = ~4s forward-info optimism in the PASS direction. Delete when triaged.
 
 ## LIVE CLAIMS / STATUS (append newest first; keep it short)
+- 2026-07-07 · V · **SEQUENCING LAW (CEO-approved, edge-first):** Priority #1 = B's OOS edge-proof fix
+  (purged/embargoed + clustered bootstrap) + certified reaction harness + decisive reaction GATE-A/GATE-B; A's signer
+  builds in parallel. Priority #2 (HARD-GATED on a reaction GO) = dashboard RED-2 + infra hardening + M4 + security
+  re-audit, **owned by V, deferred until GO**. Details: `.agency/verification/FORWARD-ROADMAP.md` §Sequencing Law +
+  ULTRA prompt §0.2. Runtimes A/B/V ≠ audit-lanes A–E.
 - 2026-07-06 · B · CLAIMED the EDGE lane (Phase 5): `aats/backtest/**`, edge `aats/models/**`, `C:/aats_shadow/**` +
   corpus. Driving momentum proof → decisive GATE-A/GATE-B. Enhanced this file into the orchestration channel above.
 - 2026-07-06 · A · CLAIMING execution go-live build (real signer) + elite completion (Wave-4, CP-07). Launching Workflows.

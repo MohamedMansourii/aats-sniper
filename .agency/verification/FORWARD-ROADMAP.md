@@ -3,6 +3,17 @@
 > Exact current state, what was verified, what remains, and the next concrete step — prioritized by capital-gating
 > impact. Everything Claude-owned (Codex dropped). Real capital stays DISABLED throughout; the CEO alone authorizes any live step.
 
+## SEQUENCING LAW — EDGE-FIRST, GO-LIVE-SECOND (CEO-approved 2026-07-07; ULTRA prompt §0.2)
+The reaction edge proof is the critical path; go-live plumbing is expensive and MOOT if the edge is NO-GO. Therefore:
+- **Priority #1 (now):** B fixes the out-of-sample edge proof (purged/embargoed + clustered/block bootstrap on the
+  REAL corpus) → certify the reaction harness (tests) → accrue the reaction corpus → **run the decisive reaction GATE-A/GATE-B.**
+  A builds the ADR-0009 signer in parallel (the #1 go-live blocker, valuable regardless). V gates every deliverable.
+- **Priority #2 (HARD-GATED on a real reaction GO):** dashboard control-surface (RED-2), infra hardening, M4 live E2E,
+  security re-audit → staged devnet → tiny-real → scale, CEO-authorized only. **If the reaction proof is NO-GO, none
+  of Priority #2 is built** — the honest conclusion (proven-safe paper platform) is recorded and nothing else is spent.
+- **Runtimes:** Session A = BUILD · Session B = EDGE · Session V = Verification/Governance (owns the gate + git-history
+  secret sweep + M4 + the deferred Priority-#2 dashboard/infra when opened). Distinct from the M3 audit-lanes A–E.
+
 ## Current state (verified, honest)
 - **Whole system built + safe.** 17 modules, Rust hot core, triple-loop, full safety spine; ~3,177 tests. The
   safety controls that matter (breaker hard-trip, DMS separate fail-closed domain, leak boundary, realizable-exit
