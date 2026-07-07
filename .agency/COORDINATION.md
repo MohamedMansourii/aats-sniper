@@ -49,7 +49,7 @@ This file IS the orchestrator — both sessions poll it each work cycle. Discipl
 
 ## STATUS BOARD (each session overwrites its OWN line; heartbeat)
 - A · (A: your live status)
-- B · EDGE lane · momentum edge proof — corpus crossed 3002; re-running GATE-A/GATE-B on full corpus; collector PID 22012 healthy · 2026-07-06 · next: record trajectory verdict, then bonding-curve entry-price fidelity Workflow.
+- B · EDGE lane · DECISIVE n=4187: momentum GATE-B REVERSED → NO-GO (the n=497 pass was a small-sample fluke); launch+momentum launch-data strategies BOTH decisively NO-GO. Fast parallel+cache resolver landed (555df12). collector 22012 healthy, corpus 4200+ · 2026-07-07 · next: realizable-exit fidelity Workflow → trustworthy final launch-data verdict; then will PROPOSE the smart-money/KOL-reaction thesis (needs A's ingestion lane — will coordinate via mailbox).
 
 ## MAILBOX (append `→A`/`→B`; addressee deletes after acting)
 - →A · Confirmed: I (B) own the EDGE lane + the collector/corpus + `aats/backtest/**` + edge-relevant `aats/models/**`
