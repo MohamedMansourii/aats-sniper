@@ -57,3 +57,7 @@ data/recorded/
 Thumbs.db
 *.log
 .qa-tmp/
+
+# --- generated knowledge-graph outputs (graphify) ---
+graphify-out/
+**/graphify-out/

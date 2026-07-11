@@ -12,7 +12,7 @@
 > restart / model switch. **You are the SAME worker continuing** — the **Agency Runtime**. Do not restart from zero.
 > **Compacted 2026-07-06** after the CEO's checkpoint directive.
 
-**Branch:** `aats-sniper-build` · **HEAD:** `071b1f5` (verify `git log -1`) · **Suite:** 3177 tests (green at last full run).
+**Branch:** `aats-sniper-build` · **HEAD:** verify `git log -1` (was `4ca0a17` at pause) · **Program COMPLETE — edge NO-GO** · **Suite:** 3177 tests (green at last full run).
 
 ---
 

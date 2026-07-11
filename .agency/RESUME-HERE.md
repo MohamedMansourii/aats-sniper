@@ -1,6 +1,14 @@
 # ▶ RESUME HERE — AATS (60-second orientation)
 
-## ⏸ PAUSED — RESUME CHECKPOINT (2026-07-07, weekly limit)
+## ✅ PROGRAM COMPLETE (2026-07-07) — edge is a decisive NO-GO; nothing further to build
+Per the CEO's IF-NO-GO directive, the decisive NO-GO verdict **is** completion. AATS is delivered as a proven-safe
+PAPER platform. **No real capital was ever enabled and none moves** — there is no proven edge to license it.
+Remaining items (signer C6 SPL-Token guard, GEYSER_TOKEN rotation, dashboard RED-2, M4 wiring, Priority-2) are ALL
+**MOOT / optional** because they only matter for a go-live that the NO-GO verdict forecloses. Do NOT launch
+Priority-2 work — it is hard-gated on a GO that does not exist. If resuming to POLISH (not to trade), the only
+in-bounds items are the OPTIONAL list in §NEXT; otherwise the program is done.
+
+## ⏸ RESUME CHECKPOINT (2026-07-07)
 
 ### THE HEADLINE — DECISIVE EDGE VERDICT = ⛔ NO-GO (project resolved)
 The reaction/whale-front-run thesis — the last strategy with a real prior — **ran through the full capital-licensing
@@ -16,7 +24,8 @@ directive: **this IS completion** — AATS is a proven-safe paper platform; Prio
   GATE-B floor (hard-clamp ≥21) + certified `reaction_harness.py` (dual-G3 PASS, no leaks, 164 backtest tests green).
 - Verification M1–M3, M5, M6 signed + M6 gap-closer + M4 pre-flight (`.agency/verification/`).
 - DECISIVE reaction verdict RAN (NO-GO) — captured here + in STATE; standalone artifact
-  `.agency/verification/DECISIVE-REACTION-VERDICT-2026-07-07.md` is PENDING (write was interrupted by the pause).
+  `.agency/verification/DECISIVE-REACTION-VERDICT-2026-07-07.md` ✅ WRITTEN + committed (50 lines).
+- `AATS-COMPLETE-CONTEXT-FOR-AI.md` (repo root) — full single-file project brief for feeding to another AI (untracked; keep or attach as desired).
 
 ### SIGNER WORKFLOW — COMPLETED, dual-G3 FAILED (committed WIP `a9a7cca`, NOT audit-passed, DO NOT ENABLE)
 `wf_cddc4d98-dc3` finished after 2 fix rounds. Enforcer is substantially real (338 execution tests pass incl 83
@@ -31,10 +40,7 @@ solana-execution-engineer (build), then re-audit with crypto-security-engineer. 
 DRY_RUN default holds; no capital path enabled). MINOR: rotate the real `GEYSER_TOKEN` in `.env` (plaintext, gitignored, read-only feed token).
 - Recorders: reaction recorder + launch collector (PID 22012) accruing autonomously (reaction 2,264+; launch 16,707+).
 
-### UNCOMMITTED (signer lane — leave until the signer workflow is gated; do NOT mix with other commits)
-`aats/execution/{__init__,exceptions,jito_jupiter_venue,rpc_client,tx_builder,ed25519_field,signer_enforcer,signer_process,solana_wire}.py`,
-`.env.example`, `config/{program-allowlist,signer-policy}.json`, `ADR-0009` (M) + `ADR-0015` (new),
-`tests/execution/{test_jito_jupiter_venue,test_ed25519_field,test_signer_enforcer,test_signer_process,test_solana_wire}.py`.
+### SIGNER LANE — ✅ COMMITTED at `a9a7cca` (was flagged uncommitted; that note is now stale). Clean working tree.
 
 ### NEXT UNIT (on resume, in order)
 1. **Write the standalone `DECISIVE-REACTION-VERDICT-2026-07-07.md`** (content = THE HEADLINE above) and deliver the
